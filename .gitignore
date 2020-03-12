@@ -1,3 +1,12 @@
+fake/
+logdir/
+test/images
+results/
+# project-specific 
+.blender1
+/data
+.vscode
+/models
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
