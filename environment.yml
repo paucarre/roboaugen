@@ -1,0 +1,26 @@
+name: roboaugen
+channels:
+  - loopbio
+  - pkgw-forge
+  - ericmjl
+  - pytorch
+  - conda-forge
+  - hcc
+dependencies:
+  - python=3.6
+  - ffmpeg=4.0.2
+  - pytorch=1.4.0
+  - torchvision=0.5.0
+  - coverage=4.5.1
+  - click=6.7
+  - simplejson=3.11.1
+  - matplotlib=3.0.3
+  - cython=0.29.6
+  - pyyaml=5.1
+  - tensorboardx=1.6
+  - imutils=0.5.3
+  - pip
+  - pip:
+    - numba==0.48.0
+    - argparse-color-formatter==1.2.1
+    - opencv-python==4.0.0.21
