@@ -3,12 +3,14 @@ from __future__ import print_function
 import sys
 import vtk 
 
+import numpy as np
+
 def get_camera():
     camera = vtk.vtkCamera()
-    camera.SetClippingRange(0.5, 10000)
-    camera.SetFocalPoint(0, 0.0, 0.0)
-    camera.SetPosition(0.0, 0.0, -40.0)
-    camera.SetViewUp(0.0, 1.0, 0.0)
+    #camera.SetClippingRange(0.5, 10000)
+    #camera.SetFocalPoint(0, 0.0, 0.0)
+    camera.SetPosition(0.0, 0.0, -75.0)
+    #camera.SetViewUp(0.0, 1.0, 0.0)
     return camera
 
 def get_light():
@@ -18,9 +20,10 @@ def get_light():
     return light
 
 def get_model_3d_renderer():
-    filename = "test/data/teapot.stl"
+    filename = "test/data/model.stl"
     reader = vtk.vtkSTLReader()
     reader.SetFileName(filename)
+    reader.Update()
     mapper = vtk.vtkPolyDataMapper()
     if vtk.VTK_MAJOR_VERSION <= 5:
         mapper.SetInput(reader.GetOutput())
@@ -28,7 +31,9 @@ def get_model_3d_renderer():
         mapper.SetInputConnection(reader.GetOutputPort())
     model_actor = vtk.vtkActor()
     model_actor.SetMapper(mapper)
-    return model_actor
+    obj = reader.GetOutputDataObject(0)
+    bounds = obj.GetBounds()
+    return model_actor, bounds
 
 def get_background(image_path):
     jpeg_reader = vtk.vtkPNGReader()
@@ -42,18 +47,26 @@ def get_background(image_path):
     origin = image_data.GetOrigin()
     spacing = image_data.GetSpacing()
     extent = image_data.GetExtent()
+    print(origin, spacing, extent)
 
     return image_actor, origin, spacing, extent
 
 def set_camera_parameters(camera, origin, extent, spacing):
+
     xc = origin[0] + 0.5*(extent[0] + extent[1]) * spacing[0]
     yc = origin[1] + 0.5*(extent[2] + extent[3]) * spacing[1]
     xd = (extent[1] - extent[0] + 1) * spacing[0]
     yd = (extent[3] - extent[2] + 1) * spacing[1]
-    d = camera.GetDistance()
-    camera.SetParallelScale(0.5 * yd)
-    camera.SetFocalPoint(xc, yc, 0.0)
-    camera.SetPosition(xc, yc, d)
+    focal_len = camera.GetDistance()
+    print(focal_len)
+    #camera.SetParallelScale(0.5 * yd)
+    l = 1#np.sqrt( (xc ** 2) + (yc ** 2) )
+    camera.SetFocalPoint(xc, yc, 0.0) # camera direction
+    camera.SetPosition(xc, yc, focal_len)
+    image_distance_y = 512 / 2
+    
+    view_angle = (180 / np.pi) * ( 2.0 * np.arctan2( image_distance_y / 2.0, focal_len ) )
+    camera.SetViewAngle( view_angle )
     return camera
 
 def get_renderer_window(scene_renderer, background_renderer):
@@ -87,80 +100,13 @@ def write_to_file(render_window):
     writer.SetFileName("screenshot.png")
     writer.SetInputConnection(window_filter.GetOutputPort())
     writer.Write()
-'''
-
-/**
- * Convert standard camera intrinsic and extrinsic parameters to a vtkCamera instance for rendering
- * Assume square pixels and 0 skew (for now).
- *
- * focal_len : camera focal length (units pixels)
- * nx,ny : image dimensions in pixels
- * principal_pt: camera principal point,
- *    i.e. the intersection of the principal ray with the image plane (units pixels)
- * camera_rot, camera_trans : rotation, translation matrix mapping world points to camera coordinates
- * depth_min, depth_max : needed to set the clipping range
- *
- **/
- ''
-def make_vtk_camera(focal_len,nx, ny,principal_pt, camera_rot,camera_trans, depth_min,  depth_max):
-
-    camera = vtk.vtkCamera
-
-
-    // convert camera rotation and translation into a 4x4 homogeneous transformation matrix
-    vtkSmartPointer<vtkMatrix4x4> camera_RT = make_transform(camera_rot, camera_trans);
-    // apply the transform to scene objects
-    camera->SetModelTransformMatrix( camera_RT );
-
-    # the camera can stay at the origin because we are transforming the scene objects
-    camera.SetPosition(0, 0, 0)
-    # look in the +Z direction of the camera coordinate system
-    camera.SetFocalPoint(0, 0, 1)
-    # the camera Y axis points down
-    camera.SetViewUp(0,-1,0)
-
-    # ensure the relevant range of depths are rendered
-    camera.SetClippingRange(depth_min, depth_max)
-
-    # convert the principal point to window center (normalized coordinate system) and set it
-    double wcx = -2*(principal_pt.x() - double(nx)/2) / nx
-    double wcy =  2*(principal_pt.y() - double(ny)/2) / ny
-    camera.SetWindowCenter(wcx, wcy)
-
-    # convert the focal length to view angle and set it
-    double view_angle = vnl_math::deg_per_rad * (2.0 * std::atan2( ny/2.0, focal_len ))
-    std::cout << "view_angle = " << view_angle << std::endl
-    camera.SetViewAngle( view_angle )
-
-    return camera
-
-
-/** 
- * Helper function: Convert rotation and translation into a vtk 4x4 homogeneous transform
- */
-vtkSmartPointer<vtkMatrix4x4> make_transform(vgl_rotation_3d<double> const& R,
-                                             vgl_vector_3d<double> const& T)
-{
-  vtkSmartPointer<vtkMatrix4x4> m = vtkSmartPointer<vtkMatrix4x4>::New();
-  vnl_matrix_fixed<double,3,3> R_mat = R.as_matrix();
-  for (int r=0; r<3; ++r) {
-    for (int c=0; c<3; ++c) {
-      m->SetElement(r,c,R_mat[r][c]);
-    }
-  }
-  m->SetElement(0,3,T.x());
-  m->SetElement(1,3,T.y());
-  m->SetElement(2,3,T.z());
-  m->SetElement(3,3,1);
-
-  return m;
-}
-'''
 
 def main(argv):
     image_actor, origin, spacing, extent = get_background(argv[1])
     background_renderer = get_background_renderer()
-    model_actor = get_model_3d_renderer()
+    model_actor, bounds = get_model_3d_renderer()
+    xmin, xmax, ymin, ymax, zmin, zmax = bounds
+
     model_actor.RotateY(45)
     light = get_light()
     camera = get_camera()
@@ -168,7 +114,7 @@ def main(argv):
     render_window = get_renderer_window(scene_renderer, background_renderer)
     background_renderer.AddActor(image_actor)
     camera = background_renderer.GetActiveCamera()
-    camera.ParallelProjectionOn()
+    camera.ParallelProjectionOff()
     set_camera_parameters(camera, origin, extent, spacing)
     render_window.Render()
     render_window_interactor = vtk.vtkRenderWindowInteractor()
