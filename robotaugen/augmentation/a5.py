@@ -5,13 +5,6 @@ import vtk
 
 import numpy as np
 
-def get_camera():
-    camera = vtk.vtkCamera()
-    #camera.SetClippingRange(0.5, 10000)
-    #camera.SetFocalPoint(0, 0.0, 0.0)
-    camera.SetPosition(0.0, 0.0, -75.0)
-    #camera.SetViewUp(0.0, 1.0, 0.0)
-    return camera
 
 def get_light():
     light = vtk.vtkLight()
@@ -32,6 +25,9 @@ def get_model_3d_renderer():
     model_actor = vtk.vtkActor()
     model_actor.SetMapper(mapper)
     obj = reader.GetOutputDataObject(0)
+    #points = obj.GetPoints()
+    #for point_id in range(points.GetNumberOfPoints()):
+     #   print(points.GetPoint(point_id))
     bounds = obj.GetBounds()
     return model_actor, bounds
 
@@ -47,24 +43,16 @@ def get_background(image_path):
     origin = image_data.GetOrigin()
     spacing = image_data.GetSpacing()
     extent = image_data.GetExtent()
-    print(origin, spacing, extent)
 
     return image_actor, origin, spacing, extent
 
 def set_camera_parameters(camera, origin, extent, spacing):
-
-    xc = origin[0] + 0.5*(extent[0] + extent[1]) * spacing[0]
-    yc = origin[1] + 0.5*(extent[2] + extent[3]) * spacing[1]
-    xd = (extent[1] - extent[0] + 1) * spacing[0]
-    yd = (extent[3] - extent[2] + 1) * spacing[1]
-    focal_len = camera.GetDistance()
-    print(focal_len)
-    #camera.SetParallelScale(0.5 * yd)
-    l = 1#np.sqrt( (xc ** 2) + (yc ** 2) )
-    camera.SetFocalPoint(xc, yc, 0.0) # camera direction
+    xc = origin[0] +  ( 0.5*(extent[0] + extent[1]) * spacing[0] )
+    yc = origin[1] +  ( 0.5*(extent[2] + extent[3]) * spacing[1] )
+    focal_len = 35
+    camera.SetFocalPoint(xc, yc, 0.0)
     camera.SetPosition(xc, yc, focal_len)
-    image_distance_y = 512 / 2
-    
+    image_distance_y = 512
     view_angle = (180 / np.pi) * ( 2.0 * np.arctan2( image_distance_y / 2.0, focal_len ) )
     camera.SetViewAngle( view_angle )
     return camera
@@ -107,9 +95,14 @@ def main(argv):
     model_actor, bounds = get_model_3d_renderer()
     xmin, xmax, ymin, ymax, zmin, zmax = bounds
 
-    model_actor.RotateY(45)
+    #model_actor.RotateY(45)
+    transform = vtk.vtkTransform()
+    transform.PostMultiply()
+    transform.Translate(0.0, (ymin - ymax) / 2 , -500.0)
+    model_actor.SetUserTransform(transform)
+
     light = get_light()
-    camera = get_camera()
+    camera = vtk.vtkCamera()
     scene_renderer = get_scene_renderer(light, model_actor, camera)
     render_window = get_renderer_window(scene_renderer, background_renderer)
     background_renderer.AddActor(image_actor)
