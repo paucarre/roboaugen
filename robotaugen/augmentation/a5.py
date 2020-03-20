@@ -89,17 +89,47 @@ def write_to_file(render_window):
     writer.SetInputConnection(window_filter.GetOutputPort())
     writer.Write()
 
+def get_transformed_edge_points(transform):
+    data_filter = vtk.vtkTransformPolyDataFilter()
+    points = vtk.vtkPoints()
+    edge_points = [
+        (-75.0, 105.0, -75.0),
+        (-75.0, 105.0, 75.0),
+        (75.0, 105.0, 75.0),
+        (75.0, 105.0, -75.0),
+        (-75.0, 0.0, -75.0),
+        (-75.0, 0.0, 75.0),
+        (75.0, 0.0, -75.0),
+        (75.0, 0.0, 75.0)]
+    for edge_point in edge_points:
+        points.InsertNextPoint(edge_point[0], edge_point[1], edge_point[2])
+    polyPtsVTP = vtk.vtkPolyData()
+    polyPtsVTP.SetPoints(points)
+    data_filter.SetInputData(polyPtsVTP)
+    data_filter.SetTransform(transform)
+    data_filter.Update()
+    output = data_filter.GetOutput()
+    points = []
+    for id in range(output.GetNumberOfPoints()):
+        p = output.GetPoint(id)
+        points.append(p)
+    return points
+    
 def main(argv):
     image_actor, origin, spacing, extent = get_background(argv[1])
     background_renderer = get_background_renderer()
     model_actor, bounds = get_model_3d_renderer()
     xmin, xmax, ymin, ymax, zmin, zmax = bounds
 
-    #model_actor.RotateY(45)
     transform = vtk.vtkTransform()
     transform.PostMultiply()
+    #transform.RotateX(20)
+    transform.RotateY(40)
+    #transform.RotateZ(90)
     transform.Translate(0.0, (ymin - ymax) / 2 , -500.0)
     model_actor.SetUserTransform(transform)
+    
+    points = get_transformed_edge_points(transform)
 
     light = get_light()
     camera = vtk.vtkCamera()
@@ -110,9 +140,9 @@ def main(argv):
     camera.ParallelProjectionOff()
     set_camera_parameters(camera, origin, extent, spacing)
     render_window.Render()
-    render_window_interactor = vtk.vtkRenderWindowInteractor()
-    render_window_interactor.SetRenderWindow(render_window)
-    render_window_interactor.Start()
+    #render_window_interactor = vtk.vtkRenderWindowInteractor()
+    #render_window_interactor.SetRenderWindow(render_window)
+    #render_window_interactor.Start()
     write_to_file(render_window)
     
 
