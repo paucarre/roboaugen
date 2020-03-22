@@ -47,12 +47,13 @@ def get_background(image_path):
     return image_actor, origin, spacing, extent
 
 def set_camera_parameters(camera, origin, extent, spacing):
-    xc = origin[0] +  ( 0.5*(extent[0] + extent[1]) * spacing[0] )
-    yc = origin[1] +  ( 0.5*(extent[2] + extent[3]) * spacing[1] )
+    xc = origin[0] +  ( 0.5 * ( extent[0] + extent[1] ) * spacing[0] )
+    yc = origin[1] +  ( 0.5 * ( extent[2] + extent[3] ) * spacing[1] )
     focal_len = 35
     camera.SetFocalPoint(xc, yc, 0.0)
     camera.SetPosition(xc, yc, focal_len)
-    image_distance_y = 512
+    # this is the dimensions of the background image
+    image_distance_y = 1520#512
     view_angle = (180 / np.pi) * ( 2.0 * np.arctan2( image_distance_y / 2.0, focal_len ) )
     camera.SetViewAngle( view_angle )
     return camera
@@ -62,6 +63,7 @@ def get_renderer_window(scene_renderer, background_renderer):
     render_window.SetNumberOfLayers(2)
     render_window.AddRenderer(background_renderer)
     render_window.AddRenderer(scene_renderer)
+    render_window.SetSize(1024,1024)
     return render_window
 
 def get_background_renderer():
@@ -115,8 +117,8 @@ def get_transformed_edge_points(transform):
         points.append(p)
     return points
     
-def main(argv):
-    image_actor, origin, spacing, extent = get_background(argv[1])
+def draw(filename, x, y, z, ry):
+    image_actor, origin, spacing, extent = get_background(filename)
     background_renderer = get_background_renderer()
     model_actor, bounds = get_model_3d_renderer()
     xmin, xmax, ymin, ymax, zmin, zmax = bounds
@@ -124,12 +126,14 @@ def main(argv):
     transform = vtk.vtkTransform()
     transform.PostMultiply()
     #transform.RotateX(20)
-    transform.RotateY(40)
+    #transform.RotateY(40)
     #transform.RotateZ(90)
-    transform.Translate(0.0, (ymin - ymax) / 2 , -500.0)
+    scale = 0.1
+    transform.Scale(scale, scale, scale)
+    transform.Translate(x, (scale * (ymin - ymax) / 2) + y , (-500.0) + z)
     model_actor.SetUserTransform(transform)
     
-    points = get_transformed_edge_points(transform)
+    #points = get_transformed_edge_points(transform)
 
     light = get_light()
     camera = vtk.vtkCamera()
@@ -140,11 +144,11 @@ def main(argv):
     camera.ParallelProjectionOff()
     set_camera_parameters(camera, origin, extent, spacing)
     render_window.Render()
-    #render_window_interactor = vtk.vtkRenderWindowInteractor()
-    #render_window_interactor.SetRenderWindow(render_window)
-    #render_window_interactor.Start()
+    render_window_interactor = vtk.vtkRenderWindowInteractor()
+    render_window_interactor.SetRenderWindow(render_window)
+    render_window_interactor.Start()
     write_to_file(render_window)
     
 
 if __name__ == '__main__':
-    main(sys.argv)
+    draw(filename=sys.argv[1], x=100, y=100, z=100, ry=0)
