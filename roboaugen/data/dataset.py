@@ -15,6 +15,7 @@ from torch.utils.data import Dataset
 import torch.nn.functional as F
 import torchvision
 from PIL import Image
+from torchvision import transforms
 
 class ObjectData():
 
@@ -189,8 +190,8 @@ class ProjectedMeshDataset(Dataset):
     def get_supports(self, index, object_type):
         supports = self.get_objects(index, [object_type] *  self.config.supports)
         supports = [self.config.get_image_sample(support.object_type, support.sample_id) for support in supports]
-        if self.distort:
-            supports = [self.distort_image(support) for support in supports]
+        #if self.distort:
+        #    supports = [self.distort_image(support) for support in supports]
         supports = [self.image_to_torch(support).unsqueeze(0) for support in supports]
         supports = torch.cat(supports, 0)
         return supports
@@ -242,7 +243,7 @@ class ProjectedMeshDataset(Dataset):
         if sample is None:
             try:
                 # Add background image and objects
-                objects_background, object_alphas_background, object_images_background = self.get_random_objects(index, 0, 1)
+                objects_background, object_alphas_background, object_images_background = self.get_random_objects(index, 0, 0)
                 background_image = self.image_to_torch(self.config.get_background_sample(index))
                 if object_images_background is not None:
                     for idx, object_image_background in enumerate(object_images_background):
@@ -250,7 +251,7 @@ class ProjectedMeshDataset(Dataset):
                         background_image += (object_alphas_background[idx] * object_image_background)
 
                 # Select foreground objects
-                objects_foreground, object_alphas_foreground, object_images_foreground = self.get_random_objects(index, 0, 1)
+                objects_foreground, object_alphas_foreground, object_images_foreground = self.get_random_objects(index, 0, 0)
                 foreground_and_background_object_types = set(map(lambda x: x.object_type, objects_background)) | set(map(lambda x: x.object_type, objects_foreground))
                 object_type = random.choice(\
                     list([object_type for object_type in self.object_type_to_ids.keys() \
@@ -278,6 +279,16 @@ class ProjectedMeshDataset(Dataset):
             except:
                 self.handle_data_loading_error(index, object_type, support_ids, object_to_detect)
                 return self.__getitem__( (index + 1000) % len(self)) # TODO: add entropy here
+        '''
+        input_image, supports, target, spatial_penalty, coordinates, coordinates_probs = sample
+        preprocess = transforms.Compose([
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
+        input_image = preprocess(input_image)
+        for support in range(supports.size()[0]):
+            supports[support, :, :, :] = preprocess(supports[support])
+        sample = input_image, supports, target, spatial_penalty, coordinates, coordinates_probs
+        '''
         return sample
 
     def get_coordinates_and_probs(self, data):

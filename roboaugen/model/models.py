@@ -224,6 +224,37 @@ class InvertedResidual(nn.Module):
 
 
 '''
+input_image, supports, target, spatial_penalty, coordinates, coordinates_probs = sample
+        preprocess = transforms.Compose([
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
+        input_image = preprocess(input_image)
+        for support in range(supports.size()[0]):
+            supports[support, :, :, :] = preprocess(supports[support])
+        sample = input_image, supports, target, spatial_penalty, coordinates, coordinates_probs
+'''
+
+class MobileNetWrapper(nn.Module):
+
+    def __init__(self,
+                features):
+        super(MobileNetWrapper, self).__init__()
+        self.features = features
+
+    def forward(self, x):
+      x[:, 0, :, :] = (x[:, 0, :, :] - 0.485) / 0.229
+      x[:, 1, :, :] = (x[:, 1, :, :] - 0.456) / 0.224
+      x[:, 2, :, :] = (x[:, 2, :, :] - 0.406) / 0.225
+      result_index = set([3, 6, 10, 16])
+      results = []
+      for index, feature in enumerate(self.features):
+        x = feature(x)
+        if index in result_index:
+          results.append(x)
+      return results
+
+
+'''
     MobileNet V2 head
 
     Paper:

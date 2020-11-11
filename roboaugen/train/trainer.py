@@ -1,8 +1,10 @@
 from roboaugen.core.config import Config
 from roboaugen.data.dataset import ProjectedMeshDataset
-from roboaugen.model.models import HigherResolutionNetwork, MobileNetV2
+from roboaugen.model.models import HigherResolutionNetwork, MobileNetWrapper
 from roboaugen.model.silco import Silco
 from  torch_optimizer import DiffGrad
+import torchvision.models as models
+import torch.nn as nn
 
 from torch.utils.tensorboard import SummaryWriter
 import torch.nn.functional as F
@@ -10,6 +12,8 @@ import torch
 import cv2
 import os
 from tqdm import tqdm
+
+import click
 
 epsillon = 1e-8
 torch.autograd.set_detect_anomaly(True)
@@ -42,29 +46,29 @@ class Trainer():
     return classifiers_entropy
 
   def mse(self, target_heatmaps, predicted_heatmaps, spatial_penalty):
-    heatmap_target = ((target_heatmaps - predicted_heatmaps) ** 2)  * (1.0 - spatial_penalty)
+    heatmap_target = ((target_heatmaps - predicted_heatmaps) ** 2)  #* (1.0 - spatial_penalty)
     return (heatmap_target.data * heatmap_target).mean()
 
-  def save_train_state(self, epoch, optimizer, optimizer_higher_resolution, optimizer_silco):
+  def save_train_state(self, epoch, optimizer_higher_resolution, optimizer_silco):
     torch.save({
                 'epoch': epoch,
-                'optimizer_state_dict': optimizer.state_dict(),
                 'optimizer_higher_resolution_state_dict': optimizer_higher_resolution.state_dict(),
                 'optimizer_silco_state_dict': optimizer_silco.state_dict()
                 }, self.config.train_state_path)
 
   def load_train_state(self):
-    optimizer = DiffGrad(self.backbone.parameters(), lr = self.learning_rate, betas=(0.9, 0.999), eps=1e-8, weight_decay=0)
+    #optimizer = DiffGrad(self.backbone.parameters(), lr = self.learning_rate, betas=(0.9, 0.999), eps=1e-8, weight_decay=0)
     optimizer_higher_resolution = DiffGrad(self.higher_resolution.parameters(), lr = self.learning_rate, betas=(0.9, 0.999), eps=1e-8, weight_decay=0)
     optimizer_silco = DiffGrad(self.silco.parameters(), lr = self.learning_rate, betas=(0.9, 0.999), eps=1e-8, weight_decay=0)
     epoch = -1
     if os.path.exists(self.config.train_state_path):
       checkpoint = torch.load(self.config.train_state_path)
-      optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+      #optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
       optimizer_higher_resolution.load_state_dict(checkpoint['optimizer_higher_resolution_state_dict'])
       optimizer_silco.load_state_dict(checkpoint['optimizer_silco_state_dict'])
       epoch = checkpoint['epoch']
-    return optimizer, optimizer_higher_resolution, optimizer_silco, epoch
+    #return optimizer, optimizer_higher_resolution, optimizer_silco, epoch
+    return optimizer_higher_resolution, optimizer_silco, epoch
 
   def log(self, epoch, epochs, batch_index, batches, batches_in_epoch, losses):
     #self.logger.info(f'Epoch {epoch + 1}/{epochs} | Batch {batch_index + 1}/{batches}')
@@ -89,17 +93,19 @@ class Trainer():
         spatial_loss = spatial_loss + spatial_classifier_support_sum.sum()
     return spatial_loss
 
-  def train(self, epochs, train_heatmap):
+  def train(self, epochs, mode):
     self.backbone.train()
-    self.silco.train()
-    self.higher_resolution.train()
     self.backbone.cuda()
-    self.silco.cuda()
+    if mode == 'silco' or mode == 'both':
+      self.silco.train()
+      self.silco.cuda()
+    self.higher_resolution.train()
     self.higher_resolution.cuda()
-    optimizer, optimizer_higher_resolution, optimizer_silco, epoch_start = self.load_train_state()
+
+    optimizer_higher_resolution, optimizer_silco, epoch_start = self.load_train_state()
     train_loader = None
     batches = None
-
+    print(f'Starting with epoch {epoch_start + 1} with a total of {epochs} epochs')
     for epoch in range(epoch_start + 1, epochs):
       if train_loader is None or (epoch + 1) % self.config.save_each_epoch == 0:
         train_dataset = ProjectedMeshDataset(self.config.input_height,
@@ -115,42 +121,60 @@ class Trainer():
         queries = queries.cuda(non_blocking=True)
         supports = supports.cuda(non_blocking=True)
         query_features, support_features = Silco.backbone_features(self.backbone, queries, supports)
-        updated_query_features, spatial_classifiers, feature_classifiers, _ = self.silco(query_features, support_features)
+        if mode == 'silco' or mode == 'both':
+          query_features, spatial_classifiers, feature_classifiers, _ = self.silco(query_features, support_features)
 
         losses['feature_entropy_loss'] = 0.#Trainer.compute_classifiers_entropy(feature_classifiers) * 1e-12
         losses['spatial_location_entropy_loss'] = 0.#Trainer.compute_classifiers_entropy(spatial_classifiers) * 1e-12
-        predicted_heatmaps = self.higher_resolution(updated_query_features)
+        predicted_heatmaps = self.higher_resolution(query_features) #updated_query_features)
         target_heatmaps = F.interpolate(target_heatmaps, size=(self.config.input_width // 2, self.config.input_height // 2), mode='bilinear').cuda(non_blocking=True)
         spatial_penalty = F.interpolate(spatial_penalty, size=(self.config.input_width // 2, self.config.input_height // 2), mode='bilinear').cuda(non_blocking=True)
         losses['mse_loss'] = self.mse(target_heatmaps, predicted_heatmaps, spatial_penalty)
         losses['total_loss'] = losses['mse_loss'] + losses['spatial_location_entropy_loss'] + losses['feature_entropy_loss']
-        only_silco = False #( (batch_index % 3) == 0 ) or ( (batch_index % 3) == 1 )
-        optimizer_silco.zero_grad()
-        if not only_silco:
-          optimizer.zero_grad()
+        #only_silco = False #( (batch_index % 3) == 0 ) or ( (batch_index % 3) == 1 )
+        if mode == 'silco' or mode == 'both':
+          optimizer_silco.zero_grad()
+        #if not only_silco:
+        if mode == 'keypoints' or mode == 'both':
           optimizer_higher_resolution.zero_grad()
         losses['total_loss'].backward()
-        if not only_silco:
-          optimizer.step()
+        #if not only_silco:
+        if mode == 'keypoints' or mode == 'both':
           optimizer_higher_resolution.step()
-        optimizer_silco.step()
+        if mode == 'silco' or mode == 'both':
+          optimizer_silco.step()
         self.log(epoch, epochs, batch_index, batches, len(train_loader), losses)
         if (batch_index + 1) % self.config.save_each == 0:
           self.save_models()
-          self.save_train_state(epoch, optimizer, optimizer_higher_resolution, optimizer_silco)
+          self.save_train_state(epoch, optimizer_higher_resolution, optimizer_silco)
       if (epoch + 1) % self.config.save_each_epoch == 0:
         self.save_models()
 
-if __name__ == '__main__':
+@click.command()
+@click.option("--learning_rate", default=0.001, help="Learning rate")
+@click.option("--batch_size", default=8, help="Batch size.")
+@click.option("--epochs", default=1000, help="Epochs.")
+@click.option("--mode", default='keypoints', help="Training mode: keypoints, silco, both.")
+def train(learning_rate, batch_size, epochs, mode):
   config = Config()
   higher_resolution = config.load_higher_resolution_model()
   if higher_resolution is None:
+    print("Higher Resolution Network not found. Creating one from scratch.")
     higher_resolution = HigherResolutionNetwork(config.channels_blocks, config.dimensions_blocks, config.num_vertices)
   silco = config.load_silco_model()
   if silco is None:
+    print("SILCO Network not found. Creating one from scratch.")
     silco = Silco()
   backbone = config.load_mobilenet_model()
   if backbone is None:
-    backbone = MobileNetV2(3)
-  trainer = Trainer(backbone, silco, higher_resolution, 8, 0.000001)
-  trainer.train(1000, True)
+    print("MobileNet Network not found. Creating one from scratch.")
+    backbone = models.mobilenet_v2(pretrained=True)
+    backbone = MobileNetWrapper(backbone.features)
+  trainer = Trainer(backbone, silco, higher_resolution, batch_size, learning_rate)
+  trainer.train(epochs, mode)
+
+
+if __name__ == '__main__':
+  train()
+
+
