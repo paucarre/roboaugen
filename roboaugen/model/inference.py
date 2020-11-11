@@ -59,10 +59,14 @@ def display_heatmap(label, input_images, predicted_heatmaps, heatmap, threshold)
 @click.option("--threshold", default=0.05, help="Positive threshold.")
 @click.option("--supports", default='', help="Path to support images.")
 @click.option("--heatmap", default=False, help="Display heatmap without image.")
+@click.option("--mode", default='keypoints', help="Training mode: keypoints, silco.")
+@click.option("--max_background_objects", default=0, help="Maximum number of background objects not in target for keypoints")
+@click.option("--max_foreground_objects", default=0, help="Maximum number of foreground objects not in target for keypoints.")
 
-def inference(sampleid, file, distort, random_crop, use_cache, threshold, supports, heatmap):
+def inference(sampleid, file, distort, random_crop, use_cache, threshold, supports, heatmap, mode, max_background_objects, max_foreground_objects):
   targets = None
-  dataset = ProjectedMeshDataset(config.input_height, config.input_width, config.num_vertices, distort=distort, random_crop=random_crop, use_cache=use_cache)
+  dataset = ProjectedMeshDataset(config.input_height, config.input_width, config.num_vertices,
+    max_background_objects, max_foreground_objects, distort=distort, random_crop=random_crop, use_cache=use_cache)
   if file == '':
     query, supports, target, spatial_penalty, _, _ = dataset.__getitem__(sampleid)
     targets = torch.cat([target.unsqueeze(0)], dim=0)
@@ -82,7 +86,8 @@ def inference(sampleid, file, distort, random_crop, use_cache, threshold, suppor
   silco = config.load_silco_model().cpu()
   backbone = config.load_mobilenet_model().cpu()
   query_features, support_features = Silco.backbone_features(backbone, query, supports)
-  ##updated_query_features, spatial_classifier, feature_classifier, spatial_supports = silco(query_features, support_features)
+  if mode == 'silco':
+    query_features, spatial_classifier, feature_classifier, spatial_supports = silco(query_features, support_features)
 
   #print([s.size() for s in spatial_supports], support_features.size())
   # scale, support, in coordinate, out coordinate

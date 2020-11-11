@@ -93,7 +93,7 @@ class Trainer():
         spatial_loss = spatial_loss + spatial_classifier_support_sum.sum()
     return spatial_loss
 
-  def train(self, epochs, mode):
+  def train(self, epochs, mode, max_background_objects, max_foreground_objects):
     self.backbone.train()
     self.backbone.cuda()
     if mode == 'silco' or mode == 'both':
@@ -110,6 +110,7 @@ class Trainer():
       if train_loader is None or (epoch + 1) % self.config.save_each_epoch == 0:
         train_dataset = ProjectedMeshDataset(self.config.input_height,
           self.config.input_width, self.config.num_vertices,
+          max_background_objects, max_foreground_objects,
           distort=True, random_crop=False, use_cache=True)
         train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
                                                     batch_size=self.batch_size,
@@ -131,14 +132,11 @@ class Trainer():
         spatial_penalty = F.interpolate(spatial_penalty, size=(self.config.input_width // 2, self.config.input_height // 2), mode='bilinear').cuda(non_blocking=True)
         losses['mse_loss'] = self.mse(target_heatmaps, predicted_heatmaps, spatial_penalty)
         losses['total_loss'] = losses['mse_loss'] + losses['spatial_location_entropy_loss'] + losses['feature_entropy_loss']
-        #only_silco = False #( (batch_index % 3) == 0 ) or ( (batch_index % 3) == 1 )
         if mode == 'silco' or mode == 'both':
           optimizer_silco.zero_grad()
-        #if not only_silco:
         if mode == 'keypoints' or mode == 'both':
           optimizer_higher_resolution.zero_grad()
         losses['total_loss'].backward()
-        #if not only_silco:
         if mode == 'keypoints' or mode == 'both':
           optimizer_higher_resolution.step()
         if mode == 'silco' or mode == 'both':
@@ -155,7 +153,10 @@ class Trainer():
 @click.option("--batch_size", default=8, help="Batch size.")
 @click.option("--epochs", default=1000, help="Epochs.")
 @click.option("--mode", default='keypoints', help="Training mode: keypoints, silco, both.")
-def train(learning_rate, batch_size, epochs, mode):
+@click.option("--max_background_objects", default=0, help="Maximum number of background objects not in target for keypoints")
+@click.option("--max_foreground_objects", default=0, help="Maximum number of foreground objects not in target for keypoints.")
+
+def train(learning_rate, batch_size, epochs, mode, max_background_objects, max_foreground_objects):
   config = Config()
   higher_resolution = config.load_higher_resolution_model()
   if higher_resolution is None:
@@ -171,7 +172,7 @@ def train(learning_rate, batch_size, epochs, mode):
     backbone = models.mobilenet_v2(pretrained=True)
     backbone = MobileNetWrapper(backbone.features)
   trainer = Trainer(backbone, silco, higher_resolution, batch_size, learning_rate)
-  trainer.train(epochs, mode)
+  trainer.train(epochs, mode, max_background_objects, max_foreground_objects)
 
 
 if __name__ == '__main__':

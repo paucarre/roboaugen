@@ -26,9 +26,11 @@ class ObjectData():
 
 class ProjectedMeshDataset(Dataset):
 
-    def __init__(self, height, width, num_vertices, distort=True, random_crop=False, use_cache=True):
+    def __init__(self, height, width, num_vertices, max_background_objects, max_foreground_objects, distort=True, random_crop=False, use_cache=True):
         self.height = height
         self.width = width
+        self.max_background_objects = max_background_objects
+        self.max_foreground_objects = max_foreground_objects
         self.num_vertices = num_vertices
         self.config = Config()
         #self.sample_ids = self.config.get_sample_ids()
@@ -243,7 +245,7 @@ class ProjectedMeshDataset(Dataset):
         if sample is None:
             try:
                 # Add background image and objects
-                objects_background, object_alphas_background, object_images_background = self.get_random_objects(index, 0, 0)
+                objects_background, object_alphas_background, object_images_background = self.get_random_objects(index, 0, self.max_background_objects)
                 background_image = self.image_to_torch(self.config.get_background_sample(index))
                 if object_images_background is not None:
                     for idx, object_image_background in enumerate(object_images_background):
@@ -251,7 +253,7 @@ class ProjectedMeshDataset(Dataset):
                         background_image += (object_alphas_background[idx] * object_image_background)
 
                 # Select foreground objects
-                objects_foreground, object_alphas_foreground, object_images_foreground = self.get_random_objects(index, 0, 0)
+                objects_foreground, object_alphas_foreground, object_images_foreground = self.get_random_objects(index, 0, self.max_foreground_objects)
                 foreground_and_background_object_types = set(map(lambda x: x.object_type, objects_background)) | set(map(lambda x: x.object_type, objects_foreground))
                 object_type = random.choice(\
                     list([object_type for object_type in self.object_type_to_ids.keys() \
@@ -279,16 +281,6 @@ class ProjectedMeshDataset(Dataset):
             except:
                 self.handle_data_loading_error(index, object_type, support_ids, object_to_detect)
                 return self.__getitem__( (index + 1000) % len(self)) # TODO: add entropy here
-        '''
-        input_image, supports, target, spatial_penalty, coordinates, coordinates_probs = sample
-        preprocess = transforms.Compose([
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ])
-        input_image = preprocess(input_image)
-        for support in range(supports.size()[0]):
-            supports[support, :, :, :] = preprocess(supports[support])
-        sample = input_image, supports, target, spatial_penalty, coordinates, coordinates_probs
-        '''
         return sample
 
     def get_coordinates_and_probs(self, data):
