@@ -37,5 +37,12 @@ translation = skew(viewer_1_as_orgin_to_viewer_2[0:3, 3])
 essential_matrix = translation @ rotation
 inverse_camera_matrix = np.linalg.inv(camera_matrix)
 fundamental_matrix = inverse_camera_matrix.T @ essential_matrix @ inverse_camera_matrix
+
+
+inferencer = Inferencer(sampleid, file, distort, keep_dimensions, use_cache, \
+    threshold, supports, heatmap, mode, max_background_objects, max_foreground_objects)
+predicted_heatmaps, targets, visualize_query, visualize_suports = inferencer.get_model_inference()
+predictions = inferencer.display_heatmap('Predictions', visualize_query, predicted_heatmaps)
+
 print(fundamental_matrix)
 print(fundamental_matrix @ np.array([0, 0, 1]))
