@@ -27,7 +27,7 @@ def display_heatmap(label, input_images, predicted_heatmaps, heatmap, threshold)
   hues = torch.arange(start=0,end=179., step = 179 / (config.num_vertices + 1) )  # H: 0-179, S: 0-255, V: 0-255.
   colored_predictions[:, :, 1, : ,:] = 128
   for sample in range(predicted_heatmaps.size()[0]):
-    predictions_in_sample = np.zeros((input_images.size()[3], input_images.size()[2], 3))
+    predictions_in_sample = np.zeros((input_images.size()[2], input_images.size()[3], 3))
     for vertex in range(predicted_heatmaps.size()[1]):
       colored_predictions[sample, vertex, 0, : , :] = int(hues[vertex])
       predicted_heatmaps[sample, vertex, : , :] = predicted_heatmaps[sample, vertex, : , :] #/ predicted_heatmaps[sample, vertex, : , :].max()
@@ -53,7 +53,7 @@ def display_heatmap(label, input_images, predicted_heatmaps, heatmap, threshold)
 @click.command()
 @click.option("--sampleid", default=1, help="Sample ID.")
 @click.option("--distort", default=False, help="Distort sample image.")
-@click.option("--random_crop", default=True, help="Random crop image.")
+@click.option("--keep_dimensions", default=True, help="Keep original image dimensions.")
 @click.option("--use_cache", default=False, help="Use image cache.")
 @click.option("--file", default='', help="Path to image file.")
 @click.option("--threshold", default=0.05, help="Positive threshold.")
@@ -63,10 +63,10 @@ def display_heatmap(label, input_images, predicted_heatmaps, heatmap, threshold)
 @click.option("--max_background_objects", default=0, help="Maximum number of background objects not in target for keypoints")
 @click.option("--max_foreground_objects", default=0, help="Maximum number of foreground objects not in target for keypoints.")
 
-def inference(sampleid, file, distort, random_crop, use_cache, threshold, supports, heatmap, mode, max_background_objects, max_foreground_objects):
+def inference(sampleid, file, distort, keep_dimensions, use_cache, threshold, supports, heatmap, mode, max_background_objects, max_foreground_objects):
   targets = None
   dataset = ProjectedMeshDataset(config.input_height, config.input_width, config.num_vertices,
-    max_background_objects, max_foreground_objects, distort=distort, random_crop=random_crop, use_cache=use_cache)
+    max_background_objects, max_foreground_objects, distort=distort, keep_dimensions=keep_dimensions, use_cache=use_cache)
   if file == '':
     query, supports, target, spatial_penalty, _, _ = dataset.__getitem__(sampleid)
     targets = torch.cat([target.unsqueeze(0)], dim=0)

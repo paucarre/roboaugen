@@ -15,12 +15,12 @@ else
     Linux*)
         echo 'Installing conda for Linux...'
         unset PYTHONPATH
-        curl -o ~/miniconda-install.sh https://repo.anaconda.com/miniconda/Miniconda2-latest-Linux-x86_64.sh
+        curl -o ~/miniconda-install.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
         chmod +x ~/miniconda-install.sh
         ~/miniconda-install.sh -b
         rm ~/miniconda-install.sh
         echo ". \$HOME/miniconda2/etc/profile.d/conda.sh" >> ~/.profile
-        . $HOME/.profile        
+        . $HOME/.profile
         ;;
     Darwin*)
         echo 'Installing conda for MacOS...'

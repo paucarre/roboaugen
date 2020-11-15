@@ -73,7 +73,6 @@ class HigherResolutionNetwork(nn.Module):
                  dimensions_blocks,
                  num_vertices):
         super(HigherResolutionNetwork, self).__init__()
-        #self.backbone = MobileNetV2(3)
         self.channels_blocks = channels_blocks
         self.num_vertices = num_vertices
         self._init_layers()
@@ -124,7 +123,7 @@ class HigherResolutionNetwork(nn.Module):
       for destination_block_index, _ in enumerate(self.channels_blocks):
         #destination_dimensions = self.dimensions_blocks[destination_block_index]
         current_aggregated_output = input_block[destination_block_index]
-        destination_dimensions = current_aggregated_output.size()[2]
+        destination_dimensions = ( current_aggregated_output.size()[2], current_aggregated_output.size()[3])
         #print('destination size: ', current_aggregated_output.size(), destination_dimensions)
         for source_block_index, _ in enumerate(self.channels_blocks):
           input_interpolated = F.interpolate(input_block[source_block_index], size=destination_dimensions, mode='bilinear')
@@ -136,7 +135,7 @@ class HigherResolutionNetwork(nn.Module):
 
     def forward_signal_aggregation(self, input_block):
       output = input_block[0]
-      destination_dimensions = input_block[0].size()[2]
+      destination_dimensions = ( input_block[0].size()[2], input_block[0].size()[3])
       for source_block_index, _ in enumerate(self.channels_blocks):
           input_interpolated = F.interpolate(input_block[source_block_index], size=destination_dimensions, mode='bilinear')
           convolution = self.source_convolution_aggregation[source_block_index]

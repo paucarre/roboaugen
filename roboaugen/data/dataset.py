@@ -11,11 +11,13 @@ import shutil
 import cv2
 import numpy as np
 import torch
+from PIL import Image
 from torch.utils.data import Dataset
 import torch.nn.functional as F
 import torchvision
-from PIL import Image
 from torchvision import transforms
+import torchvision.transforms.functional as TF
+
 
 class ObjectData():
 
@@ -26,7 +28,7 @@ class ObjectData():
 
 class ProjectedMeshDataset(Dataset):
 
-    def __init__(self, height, width, num_vertices, max_background_objects, max_foreground_objects, distort=True, random_crop=False, use_cache=True):
+    def __init__(self, height, width, num_vertices, max_background_objects, max_foreground_objects, distort=True, keep_dimensions=False, use_cache=True):
         self.height = height
         self.width = width
         self.max_background_objects = max_background_objects
@@ -37,62 +39,46 @@ class ProjectedMeshDataset(Dataset):
         self.num_vertices = num_vertices
         self.target_generator = TargetGenerator(height, width, num_vertices)
         self.distort = distort
-        self.random_crop = random_crop
         self.logger = self.config.get_logger(self)
         self.use_cache = use_cache
         self.object_type_to_ids = self.config.get_object_type_to_ids()
+        self.keep_dimensions = False
 
     def __len__(self,):
         return sum([len(ids) for ids in self.object_type_to_ids.values()])
 
-    def saturate_image(self, image, value=30):
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        h, s, v = cv2.split(hsv)
-        if value > 0:
-            limit = 255 - value
-            s[s > limit] = 255
-            s[s <= limit] += value
-        else:
-            limit = -value
-            s[s > limit] -= -value
-            s[s <= limit] = 0
-        final_hsv = cv2.merge((h, s, v))
-        image = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)
-        return image
-
-    def luminate_image(self, image, value=30):
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        h, s, v = cv2.split(hsv)
-        if value > 0:
-            limit = 255 - value
-            v[v > limit] = 255
-            v[v <= limit] += value
-        else:
-            limit = -value
-            v[v > limit] -= -value
-            v[v <= limit] = 0
-        final_hsv = cv2.merge((h, s, v))
-        image = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)
-        return image
-
     def distort_image(self, input_image):
-        alpha = (torch.rand(1).item() * 0.5 ) + 1.0 # Contrast control (1.0-1.5)
-        input_image = cv2.convertScaleAbs(input_image, alpha=alpha, beta=0)
-        saturation = int( (torch.rand(1).item() * 60) - 30 )
-        input_image = self.saturate_image(input_image, saturation)
-        lumination = int( (torch.rand(1).item() * 100) - 50 )
-        input_image = self.luminate_image(input_image, lumination)
+        input_image = TF.adjust_brightness(input_image, 1.0 + (torch.rand(1).item() - 0.5)) # from 0.5 to 1.5
+        input_image = TF.adjust_contrast(input_image, 1.0 + (torch.rand(1).item() - 0.5)) # from 0.5 to 1.5
+        input_image = TF.adjust_saturation(input_image, 1.0 + (torch.rand(1).item() - 0.5)) # from 0.5 to 1.5
+        if torch.rand(1).item() < 0.1:
+            kernel_size = int(torch.rand(1).item() * 30) + 3
+            if kernel_size % 2 == 0:
+                kernel_size -= 1
+            input_image = torchvision.transforms.GaussianBlur(kernel_size, sigma=(0.1, 2.0))(input_image)
         return input_image
 
     def image_to_torch(self, input_image):
         input_image = torch.from_numpy(input_image / 255)
+        input_image_width = input_image.shape[1]
+        input_image_height = input_image.shape[0]
         input_image = input_image.transpose(0, 2).transpose(1, 2).float()
-        if input_image.size()[1] != input_image.size()[2] or \
-            input_image.size()[0] != self.config.input_height or input_image.size()[1] != self.config.input_width:
-            #aspect_ratio = input_image.size()[0] / input_image.size()[1]
-            #if aspect_ratio > 1.0:
+        if self.keep_dimensions == True:
+            if input_image_width != input_image_height or \
+                input_image_height != self.config.input_height or input_image_width != self.config.input_width:
+                input_image = input_image.unsqueeze(1)
+                input_image = F.interpolate(input_image, size=(self.config.input_height, self.config.input_width), mode='bilinear')
+                input_image = input_image.squeeze(1)
+        elif max(input_image_height, input_image_width) > max(self.config.input_height, self.config.input_width):
+            aspect_ratio = input_image_height / input_image_width
+            if input_image_height > input_image_width:
+                input_image_height = max(self.config.input_height, self.config.input_width)
+                input_image_width = int(input_image_height / aspect_ratio)
+            else:
+                input_image_width = max(self.config.input_height, self.config.input_width)
+                input_image_height = int(input_image_width * aspect_ratio)
             input_image = input_image.unsqueeze(1)
-            input_image = F.interpolate(input_image, size=(self.config.input_height, self.config.input_width), mode='bilinear')
+            input_image = F.interpolate(input_image, size=(input_image_height, input_image_width), mode='bilinear')
             input_image = input_image.squeeze(1)
         return input_image
 
@@ -192,10 +178,10 @@ class ProjectedMeshDataset(Dataset):
     def get_supports(self, index, object_type):
         supports = self.get_objects(index, [object_type] *  self.config.supports)
         supports = [self.config.get_image_sample(support.object_type, support.sample_id) for support in supports]
-        #if self.distort:
-        #    supports = [self.distort_image(support) for support in supports]
-        supports = [self.image_to_torch(support).unsqueeze(0) for support in supports]
-        supports = torch.cat(supports, 0)
+        supports = [self.image_to_torch(support) for support in supports]
+        if self.distort:
+            supports = [self.distort_image(support) for support in supports]
+        supports = torch.cat([support.unsqueeze(0) for support in supports], 0)
         return supports
 
     def generate_target(self, data, std):
@@ -207,9 +193,8 @@ class ProjectedMeshDataset(Dataset):
         object_image = self.image_to_torch(input_image[:, :, 0:3])
         background_image = background_image * (1.0 - object_alphas)
         input_image = background_image + (object_image * object_alphas)
-        # TODO: put distortions back in place
-        #if self.distort:
-        #    input_image = self.distort_image(input_image)
+        if self.distort:
+            input_image = self.distort_image(input_image)
         if object_images_foreground is not None:
             for idx, object_image_foreground in enumerate(object_images_foreground):
                 input_image = input_image * (1.0 - object_alphas_foreground[idx])
@@ -218,11 +203,8 @@ class ProjectedMeshDataset(Dataset):
         return input_image, object_alphas
 
     def get_only_background(self, index, input_image, object_images_foreground, object_alphas_foreground):
-        '''
         if self.distort:
             input_image = self.distort_image(input_image)
-        input_image = self.image_to_torch(input_image)
-        '''
         if object_images_foreground is not None:
             for idx, object_image_foreground in enumerate(object_images_foreground):
                 input_image = input_image * (1.0 - object_alphas_foreground[idx])
@@ -260,7 +242,7 @@ class ProjectedMeshDataset(Dataset):
                         if object_type not in foreground_and_background_object_types]))
 
 
-                # There will always be supports
+                # There will always be supports => TODO: actually during only keypoint training/inference there are no supports!!
                 supports = self.get_supports(index, object_type)
 
                 # Add image, if applicable

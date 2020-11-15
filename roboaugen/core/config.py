@@ -7,6 +7,7 @@ import traceback
 import logging
 import torch
 import shutil
+import numpy as np
 
 class Config():
 
@@ -17,6 +18,10 @@ class Config():
     self.cache_train_dir = f"{self.project_root}/data/cache_train"
     self.model_dir = f"{self.project_root}/models"
     self.train_state_path = f"{self.model_dir}/train_state"
+    self.camera_dir = f"{self.project_root}/data/camera"
+
+    self.camera_matrix_path = f"{self.camera_dir}/camera_matrix.numpy"
+    self.distortion_coefficients_path = f"{self.camera_dir}/distortion_coefficients.numpy"
 
     self.channels_blocks = [24, 32, 64, 160]
     self.input_width = 256 # 512
@@ -30,6 +35,22 @@ class Config():
     self.supports = 5
     self.context_classes = 2
     self.logger = self.get_logger(self)
+
+  def save_camera_parameters(self, camera_matrix, distortion_coefficients):
+    with open(self.camera_matrix_path, "wb") as camera_matrix_file:
+      np.save(camera_matrix_file, camera_matrix)
+    with open(self.distortion_coefficients_path, "wb") as dist_file:
+      np.save(dist_file, distortion_coefficients)
+
+  def load_camera_parameters(self):
+    camera_matrix = None
+    distortion_coefficients = None
+    if os.path.exists(self.camera_matrix_path) and os.path.exists(self.distortion_coefficients_path):
+        with open(self.camera_matrix_path, "rb") as camera_matrix_file:
+            camera_matrix = np.load(camera_matrix_file)
+        with open(self.distortion_coefficients_path, "rb") as dist_file:
+            distortion_coefficients = np.load(dist_file)
+    return camera_matrix, distortion_coefficients
 
   def save_mobilenet_model(self, model):
     self._save_model('mobilenet_model', model)

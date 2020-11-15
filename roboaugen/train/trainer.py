@@ -93,7 +93,7 @@ class Trainer():
         spatial_loss = spatial_loss + spatial_classifier_support_sum.sum()
     return spatial_loss
 
-  def train(self, epochs, mode, max_background_objects, max_foreground_objects):
+  def train(self, epochs, mode, max_background_objects, max_foreground_objects, distort):
     self.backbone.train()
     self.backbone.cuda()
     if mode == 'silco' or mode == 'both':
@@ -111,7 +111,7 @@ class Trainer():
         train_dataset = ProjectedMeshDataset(self.config.input_height,
           self.config.input_width, self.config.num_vertices,
           max_background_objects, max_foreground_objects,
-          distort=True, random_crop=False, use_cache=True)
+          distort=distort, keep_dimensions=True, use_cache=True)
         train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
                                                     batch_size=self.batch_size,
                                                     shuffle=False,
@@ -155,8 +155,9 @@ class Trainer():
 @click.option("--mode", default='keypoints', help="Training mode: keypoints, silco, both.")
 @click.option("--max_background_objects", default=0, help="Maximum number of background objects not in target for keypoints")
 @click.option("--max_foreground_objects", default=0, help="Maximum number of foreground objects not in target for keypoints.")
+@click.option("--distort", default=False, help="Wether to apply distortions.")
 
-def train(learning_rate, batch_size, epochs, mode, max_background_objects, max_foreground_objects):
+def train(learning_rate, batch_size, epochs, mode, max_background_objects, max_foreground_objects, distort):
   config = Config()
   higher_resolution = config.load_higher_resolution_model()
   if higher_resolution is None:
@@ -172,7 +173,7 @@ def train(learning_rate, batch_size, epochs, mode, max_background_objects, max_f
     backbone = models.mobilenet_v2(pretrained=True)
     backbone = MobileNetWrapper(backbone.features)
   trainer = Trainer(backbone, silco, higher_resolution, batch_size, learning_rate)
-  trainer.train(epochs, mode, max_background_objects, max_foreground_objects)
+  trainer.train(epochs, mode, max_background_objects, max_foreground_objects, distort)
 
 
 if __name__ == '__main__':

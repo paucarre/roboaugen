@@ -7,17 +7,17 @@ channels:
   - conda-forge
   - hcc
 dependencies:
-  - python=3.7
+  - python=3.8
   - cudatoolkit=10.1
-  - ffmpeg=4.0.2
-  - pytorch=1.5.0
-  - torchvision
-  - coverage=4.5.1
-  - click=6.7
-  - tqdm=4.38.0
+  - ffmpeg
+  - pytorch=1.7.0
+  - torchvision==0.8.1
+  - coverage
+  - click
+  - tqdm
   - tensorboard
   - nvidia-apex
   - pip
   - pip:
-    - opencv-python==4.0.0.21
+    opencv-python==4.4.0.46
     - torch-optimizer
