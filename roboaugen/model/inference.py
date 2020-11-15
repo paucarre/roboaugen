@@ -21,12 +21,11 @@ import click
 class Inferencer():
 
   def __init__(self, distort, keep_dimensions, use_cache, \
-      threshold, heatmap, mode, max_background_objects, max_foreground_objects):
+      heatmap, mode, max_background_objects, max_foreground_objects):
     self.config = Config()
     self.distort = distort
     self.keep_dimensions = keep_dimensions
     self.use_cache = use_cache
-    self.threshold = threshold
     self.heatmap = heatmap
     self.mode = mode
     self.max_background_objects = max_background_objects
@@ -41,7 +40,7 @@ class Inferencer():
   def to_numpy_image(tensor):
     return tensor.transpose(0,2).transpose(0,1).numpy()
 
-  def display_heatmap(self, label, input_images, predicted_heatmaps):
+  def display_heatmap(self, label, input_images, predicted_heatmaps, threshold):
     colored_predictions = torch.zeros(predicted_heatmaps.size()[0], predicted_heatmaps.size()[1], 3, input_images.size()[2], input_images.size()[3])
     hues = torch.arange(start=0,end=179., step = 179 / (self.config.num_vertices + 1) )  # H: 0-179, S: 0-255, V: 0-255.
     colored_predictions[:, :, 1, : ,:] = 128
@@ -50,7 +49,7 @@ class Inferencer():
       for vertex in range(predicted_heatmaps.size()[1]):
         colored_predictions[sample, vertex, 0, : , :] = int(hues[vertex])
         predicted_heatmaps[sample, vertex, : , :] = predicted_heatmaps[sample, vertex, : , :]
-        predicted_heatmaps[sample, vertex, : , :] = (predicted_heatmaps[sample, vertex, : , :] > self.threshold)
+        predicted_heatmaps[sample, vertex, : , :] = (predicted_heatmaps[sample, vertex, : , :] > threshold)
         colored_predictions[sample, vertex, 2, : , :] = (predicted_heatmaps[sample, vertex, : , :] * 255.).byte()
         current_prediction = colored_predictions[sample, vertex, :, : , :].transpose(0,2).transpose(0,1).numpy()
         current_prediction = cv2.cvtColor(current_prediction, cv2.COLOR_HSV2BGR)
@@ -69,9 +68,11 @@ class Inferencer():
       return new_input_image
 
   def get_supports_and_query(self, sampleid, file, supports):
+    target_heatmaps = None
+    spatial_penalty = None
     if file == '':
       query, supports, target, spatial_penalty, _, _ = self.dataset.__getitem__(sampleid)
-      targets = torch.cat([target.unsqueeze(0)], dim=0)
+      target_heatmaps = torch.cat([target.unsqueeze(0)], dim=0)
       spatial_penalty = torch.cat([spatial_penalty.unsqueeze(0)], dim=0)
       supports = supports.unsqueeze(0)
     else:
@@ -81,20 +82,31 @@ class Inferencer():
       supports = torch.cat(supports, 1)
       query = self.dataset.image_to_torch(cv2.imread(file))
     query = torch.cat([query.unsqueeze(0)], dim=0)
-    return supports, query
+    return supports, query, target_heatmaps, spatial_penalty
 
 
   def get_model_inference(self, supports, query):
-    targets = None
-    visualize_query = query.clone()
-    visualize_suports = supports.clone()
     query_features, support_features = Silco.backbone_features(self.backbone, query, supports)
     if self.mode == 'silco':
       query_features, spatial_classifier, feature_classifier, spatial_supports = self.silco(query_features, support_features)
     predicted_heatmaps = self.higher_resolution(query_features)
+    return predicted_heatmaps
+
+  def display_results(self, visualize_query, visualize_suports, predicted_heatmaps, target_heatmap, spatial_penalty, threshold):
     predicted_heatmaps = F.interpolate(predicted_heatmaps, size=(visualize_query.size()[2], visualize_query.size()[3]), mode='bilinear')
     predicted_heatmaps = predicted_heatmaps.detach().cpu()
-    return predicted_heatmaps, targets, visualize_query, visualize_suports
+    predictions = self.display_heatmap('Predictions', visualize_query, predicted_heatmaps, threshold)
+    if target_heatmap is not None:
+      targets = self.display_heatmap('Targets', visualize_query, target_heatmap, threshold)
+      spatial_penalty = self.display_heatmap('Spatial Penalty', visualize_query, spatial_penalty, threshold)
+      images = np.hstack((targets, spatial_penalty, predictions))
+      cv2.imshow(f'Targets - Spatial Penalty - Predictions', images)
+    else:
+      cv2.imshow(f'Predictions', predictions)
+    visualize_suports = visualize_suports.squeeze(0)
+    visualize_suports = [Inferencer.to_numpy_image(visualize_suports[sample_idx]) for sample_idx in range(visualize_suports.size()[0])]
+    visualize_suports = np.hstack(visualize_suports)
+    cv2.imshow(f'Supports', visualize_suports)
 
 @click.command()
 @click.option("--sampleid", default=1, help="Sample ID.")
@@ -110,23 +122,12 @@ class Inferencer():
 @click.option("--max_foreground_objects", default=0, help="Maximum number of foreground objects not in target for keypoints.")
 def inference(sampleid, distort, keep_dimensions, use_cache, file, threshold, supports, heatmap, mode, max_background_objects, max_foreground_objects):
   inferencer = Inferencer(distort, keep_dimensions, use_cache, \
-      threshold, heatmap, mode, max_background_objects, max_foreground_objects)
-  supports, query = inferencer.get_supports_and_query(sampleid, file, supports)
-  predicted_heatmaps, targets, visualize_query, visualize_suports = inferencer.get_model_inference(supports, query)
-  predictions = inferencer.display_heatmap('Predictions', visualize_query, predicted_heatmaps)
-  if targets is not None:
-    targets = inferencer.display_heatmap('Targets', visualize_query, targets, heatmap, threshold)
-    spatial_penalty = inferencer.display_heatmap('Spatial Penalty', visualize_query, spatial_penalty)
-    images = np.hstack((targets, spatial_penalty, predictions))
-    cv2.imshow(f'Targets - Spatial Penalty - Predictions', images)
-  else:
-    cv2.imshow(f'Predictions', predictions)
-  visualize_suports = visualize_suports.squeeze(0)
-  visualize_suports = [Inferencer.to_numpy_image(visualize_suports[sample_idx]) for sample_idx in range(visualize_suports.size()[0])]
-  visualize_suports = np.hstack(visualize_suports)
-  cv2.imshow(f'Supports', visualize_suports)
-
-
+      heatmap, mode, max_background_objects, max_foreground_objects)
+  supports, query, target_heatmaps, spatial_penalty = inferencer.get_supports_and_query(sampleid, file, supports)
+  visualize_query = query.clone()
+  visualize_suports = supports.clone()
+  predicted_heatmaps = inferencer.get_model_inference(supports, query)
+  inferencer.display_results(visualize_query, visualize_suports, predicted_heatmaps, target_heatmaps, spatial_penalty, threshold)
   cv2.waitKey(0)
 
 if __name__ == '__main__':
