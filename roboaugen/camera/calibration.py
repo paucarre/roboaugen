@@ -39,11 +39,12 @@ class CameraCalibrator():
         image = cv2.drawContours(image, [image_points[4:]],-1,(0,0,255),3)
         return image
 
-    def get_camera_matrix(self, image):
+    def get_camera_matrix(self, image, mm):
         objp = np.zeros((6*7,3), np.float32)
-        objp[:,:2] = (np.mgrid[0:7,0:6].T.reshape(-1,2) * 5) - 15
+        #objp[:,:2] = np.mgrid[0:9,0:6].T.reshape(-1,2)*10
+        objp[:,:2] = (np.mgrid[0:7,0:6].T.reshape(-1,2) * mm)
         #print(objp)
-        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 50, 0.001)
         objpoints = []
         imagepoints = []
         gray = cv2.cvtColor(image,cv2.COLOR_BGR2GRAY)
@@ -84,7 +85,8 @@ class CameraCalibrator():
 
 @click.command()
 @click.option("--camera", default=0, help="OpenCV Camera index")
-def calibrate(camera):
+@click.option("--mm", default=10, help="mm of the chessboard size")
+def calibrate(camera, mm):
     Q_KEY_CODE = 113
     video_capture = cv2.VideoCapture(camera)
     camera_matrix, distortion_coefficients = None, None
@@ -92,11 +94,10 @@ def calibrate(camera):
     while video_capture.isOpened():
         ret, image = video_capture.read()
         cv2.imshow('image', image)
-        if camera_matrix is None or distortion_coefficients is None:
-            print(f'Neither camera matrix nor distortion coefficients found. Generating them')
-            camera_matrix, distortion_coefficients, image_with_keypoints = camera_calibrator.get_camera_matrix(image)
-            if image_with_keypoints is not None:
-                cv2.imshow('image_with_keypoints', image_with_keypoints)
+        print('Image shape: ', image.shape)
+        camera_matrix, distortion_coefficients, image_with_keypoints = camera_calibrator.get_camera_matrix(image, mm)
+        if image_with_keypoints is not None:
+            cv2.imshow('image_with_keypoints', image_with_keypoints)
         if camera_matrix is not None or distortion_coefficients is not None:
             angle_x, angle_y, angle_z, translation = camera_calibrator.get_position_and_orientation(image, camera_matrix, distortion_coefficients)
             print(f'Orientation: {angle_x}, {angle_y}, {angle_z}. Translation: {translation}')
