@@ -24,8 +24,11 @@ class FundamentalMatrixGenerator():
 
     def generate_fundamental_matrix(self, initial_state, final_state):
         robot_transformation_initial = robot_forward_kinamatics.get_transformation(initial_state)
+        print(robot_transformation_initial)
         robot_transformation_final = robot_forward_kinamatics.get_transformation(final_state)
+        print(robot_transformation_final)
         viewer_initial_as_orgin_to_viewer_final = np.linalg.inv(robot_transformation_initial) @ robot_transformation_final
+        print(robot_transformation_final)
         rotation = viewer_initial_as_orgin_to_viewer_final[0:3, 0:3]
         translation = viewer_initial_as_orgin_to_viewer_final[0:3, 3]
         fundamental_matrix = self._get_fundamental_matrix(rotation, translation)
