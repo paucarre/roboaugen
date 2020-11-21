@@ -31,6 +31,10 @@ class FundamentalMatrixGenerator():
         fundamental_matrix = self._get_fundamental_matrix(rotation, translation)
         return fundamental_matrix
 
+    def get_origin(self):
+        camera_matrix_transformed = self.camera_matrix @ self.trans_robot_to_camera
+        origin = camera_matrix_transformed @ np.array([1, 0, 0])
+        return origin
 
     def _get_fundamental_matrix(self, rotation, translation):
         essential_matrix = FundamentalMatrixGenerator.skew(translation) @ rotation
@@ -45,11 +49,11 @@ class EpipolarLineGenerator():
     def __init__(self, fundamental_matrix):
         self.fundamental_matrix = fundamental_matrix
 
-    def get_epipolar_line_in_initial_image_from_point_in_second(self, coordinate_x, coordinate_y):
+    def get_epipolar_line_in_initial_image_from_point_in_final(self, coordinate_x, coordinate_y):
         epipolar_line  = fundamental_matrix @ np.array([coordinate_x, coordinate_y, 1])
         return EpipolarLine(epipolar_line[0], epipolar_line[1], epipolar_line[2])
 
-    def get_epipolar_line_in_final_image_from_point_in_first(self, coordinate_x, coordinate_y):
+    def get_epipolar_line_in_final_image_from_point_in_initial(self, coordinate_x, coordinate_y):
         epipolar_line  = np.array([coordinate_x, coordinate_y, 1]) @ fundamental_matrix
         return EpipolarLine(epipolar_line[0], epipolar_line[1], epipolar_line[2])
 
@@ -77,9 +81,11 @@ class EpipolarLine():
 
 
 config = Config()
-
-def change_coordinates_with_zero_at_center(x, y, height, width):
-    return int((width / 2) + x), int((height / 2) - y)
+#321.16705271 202.82556455
+# 320 240
+#def change_coordinates_with_zero_at_center(x, y, height=None, width=None):
+#    return int((320) + x), int((240) + y)
+#return int((321.16705271) + x), int((202.82556455) + y)
 
 def to_radians(degrees):
     return degrees * np.pi / 180.
@@ -87,8 +93,8 @@ def to_radians(degrees):
 
 camera_topology = RobotTopology(l1=142, l2=142, l3=60, h1=30, angle_wide_1=180, angle_wide_2=180 + 90, angle_wide_3=180 + 90)
 robot_forward_kinamatics = RobotForwardKinematics(camera_topology)
-state_1 = RobotState(linear_1=0, angle_1=to_radians(73.6583), angle_2=to_radians(63.6454), angle_3=to_radians(333.4349))
-state_2 = RobotState(linear_1=0, angle_1=to_radians(296.3546), angle_2=to_radians(286.3417), angle_3=to_radians(26.5651))
+state_1 = RobotState(linear_1=20, angle_1=to_radians(73.6583), angle_2=to_radians(63.6454), angle_3=to_radians(333.4349))
+state_2 = RobotState(linear_1=20, angle_1=to_radians(296.3546), angle_2=to_radians(286.3417), angle_3=to_radians(26.5651))
 
 image_initial_path = '/home/rusalka/Pictures/Webcam/230_200_1_m05.jpg'
 image_final_path = '/home/rusalka/Pictures/Webcam/230_m200_1_05.jpg'
@@ -96,13 +102,16 @@ image_initial = config.get_image_from_path(image_initial_path)
 image_final = config.get_image_from_path(image_final_path)
 height, width = image_final.shape[0], image_final.shape[1]
 
-coordinate_x, coordinate_y = 30, -147
-coordinate_x, coordinate_y = change_coordinates_with_zero_at_center(coordinate_x, coordinate_y, height, width)
+#coordinate_x, coordinate_y = 30, 147
+#coordinate_x, coordinate_y = 30, 180
+coordinate_x, coordinate_y = int(321.16705271) + 27, int(202.82556455) + 190
+#coordinate_x, coordinate_y = change_coordinates_with_zero_at_center(coordinate_x, coordinate_y, height, width)
 
 fundamental_matrix_generator = FundamentalMatrixGenerator(camera_topology)
+origin = fundamental_matrix_generator.get_origin()
 fundamental_matrix = fundamental_matrix_generator.generate_fundamental_matrix(state_1, state_2)
 epipolar_line_generator = EpipolarLineGenerator(fundamental_matrix)
-epipoloar_line = epipolar_line_generator.get_epipolar_line_in_final_image_from_point_in_first(coordinate_x, coordinate_y)
+epipoloar_line = epipolar_line_generator.get_epipolar_line_in_initial_image_from_point_in_final(coordinate_x, coordinate_y)
 x_init, y_init, x_final, y_final = epipoloar_line.from_image(image_final)
 
 
