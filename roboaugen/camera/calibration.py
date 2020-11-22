@@ -51,16 +51,27 @@ class CameraCalibrator():
         ret, corners = cv2.findChessboardCorners(gray, (7,6),None)
         if ret:
             objpoints.append(objp)
-            corners2 = cv2.cornerSubPix(gray,corners,(11,11),(-1,-1),criteria)
+            corners2 = cv2.cornerSubPix(gray, corners,(11,11), (-1,-1), criteria)
             imagepoints.append(corners2)
             frame = cv2.drawChessboardCorners(image, (7,6), corners2,ret)
+            # initial calibration
             ret, camera_matrix, distortion_coefficients, rotation_vectors, translation_vectors = \
                 cv2.calibrateCamera(objpoints, imagepoints, gray.shape[::-1], None, None)
-            self.config.save_camera_parameters(camera_matrix, distortion_coefficients)
-            return camera_matrix, distortion_coefficients, frame
+            # refine camera matrix cropping image
+            height, width = gray.shape[0], image.shape[1]
+            new_camera_matrix, region_of_interest = cv2.getOptimalNewCameraMatrix(camera_matrix, distortion_coefficients,\
+                (height, width), 1, (height, width))
+            # undistort
+            undistorted_gray = cv2.undistort(gray, camera_matrix, distortion_coefficients, None, new_camera_matrix)
+            # crop the image
+            region_x, region_y, region_w, region_h = region_of_interest
+            undistorted_gray = undistorted_gray[region_y : region_y + region_h, region_x : region_x + region_w]
+
+            self.config.save_camera_parameters(new_camera_matrix, distortion_coefficients)
+            return new_camera_matrix, distortion_coefficients, frame, undistorted_gray
         else:
             print('No chessboard corners found in image')
-        return None, None, None
+        return None, None, None, None
 
     def get_position_and_orientation(self, image, camera_matrix, distortion_coefficients):
         object_points = np.zeros(( 6 * 7, 3 ), np.float32)
@@ -95,13 +106,18 @@ def calibrate(camera, mm):
         ret, image = video_capture.read()
         cv2.imshow('image', image)
         print('Image shape: ', image.shape)
-        camera_matrix, distortion_coefficients, image_with_keypoints = camera_calibrator.get_camera_matrix(image, mm)
+        camera_matrix, distortion_coefficients, image_with_keypoints, gray_image_undistorted = camera_calibrator.get_camera_matrix(image, mm)
         if image_with_keypoints is not None:
+            print(f'camera_matrix: {camera_matrix}')
+            print(f'distortion_coefficients: {distortion_coefficients}')
             cv2.imshow('image_with_keypoints', image_with_keypoints)
-        if camera_matrix is not None or distortion_coefficients is not None:
-            angle_x, angle_y, angle_z, translation = camera_calibrator.get_position_and_orientation(image, camera_matrix, distortion_coefficients)
-            print(f'Orientation: {angle_x}, {angle_y}, {angle_z}. Translation: {translation}')
-        print('Press any key to take another photo or press "q" to quit.')
+            cv2.imshow('gray image undistorted', gray_image_undistorted)
+        #if camera_matrix is not None or distortion_coefficients is not None:
+        #    angle_x, angle_y, angle_z, translation = camera_calibrator.get_position_and_orientation(image, camera_matrix, distortion_coefficients)
+        #    print(f'Orientation: {angle_x}, {angle_y}, {angle_z}. Translation: {translation}')
+        print('Place the chessboard as closed as possible to the camera.\n' +
+            'It should be so close that the curvature is clear. This is the most important!!!!\n' +
+            'Press any key to take another photo or press "q" to quit.')
         key = cv2.waitKey(0) & 0xff
         if key == Q_KEY_CODE:
             sys.exit(1)

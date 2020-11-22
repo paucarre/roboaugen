@@ -31,6 +31,7 @@ class FundamentalMatrixGenerator():
         print(robot_transformation_final)
         rotation = viewer_initial_as_orgin_to_viewer_final[0:3, 0:3]
         translation = viewer_initial_as_orgin_to_viewer_final[0:3, 3]
+        print(translation)
         fundamental_matrix = self._get_fundamental_matrix(rotation, translation)
         return fundamental_matrix
 
@@ -94,29 +95,33 @@ def to_radians(degrees):
     return degrees * np.pi / 180.
 
 
-camera_topology = RobotTopology(l1=142, l2=142, l3=60, h1=30, angle_wide_1=180, angle_wide_2=180 + 90, angle_wide_3=180 + 90)
+camera_topology = RobotTopology(l1=142, l2=142, l3=60, h1=50, angle_wide_1=180, angle_wide_2=180 + 90, angle_wide_3=180 + 90)
 robot_forward_kinamatics = RobotForwardKinematics(camera_topology)
 state_1 = RobotState(linear_1=20, angle_1=to_radians(73.6583), angle_2=to_radians(63.6454), angle_3=to_radians(333.4349))
 state_2 = RobotState(linear_1=20, angle_1=to_radians(296.3546), angle_2=to_radians(286.3417), angle_3=to_radians(26.5651))
 
-image_initial_path = '/home/rusalka/Pictures/Webcam/230_200_1_m05.jpg'
-image_final_path = '/home/rusalka/Pictures/Webcam/230_m200_1_05.jpg'
+fundamental_matrix_generator = FundamentalMatrixGenerator(camera_topology)
+origin = fundamental_matrix_generator.get_origin()
+print(f'Origin: {origin}')
+
+#coordinate_x, coordinate_y = int(origin[0]) + 130, int(origin[1]) + 175
+coordinate_x, coordinate_y = int(origin[0]) + 40, int(origin[1]) + 205
+
+fundamental_matrix = fundamental_matrix_generator.generate_fundamental_matrix(state_1, state_2)
+epipolar_line_generator = EpipolarLineGenerator(fundamental_matrix)
+epipoloar_line = epipolar_line_generator.get_epipolar_line_in_initial_image_from_point_in_final(coordinate_x, coordinate_y)
+
+
+image_initial_path = '/home/rusalka/Pictures/Webcam/first.jpg'
+image_final_path = '/home/rusalka/Pictures/Webcam/second.jpg'
 image_initial = config.get_image_from_path(image_initial_path)
 image_final = config.get_image_from_path(image_final_path)
 height, width = image_final.shape[0], image_final.shape[1]
 
-#coordinate_x, coordinate_y = 30, 147
-#coordinate_x, coordinate_y = 30, 180
-coordinate_x, coordinate_y = int(321.16705271) + 27, int(202.82556455) + 190
-#coordinate_x, coordinate_y = change_coordinates_with_zero_at_center(coordinate_x, coordinate_y, height, width)
-
-fundamental_matrix_generator = FundamentalMatrixGenerator(camera_topology)
-origin = fundamental_matrix_generator.get_origin()
-fundamental_matrix = fundamental_matrix_generator.generate_fundamental_matrix(state_1, state_2)
-epipolar_line_generator = EpipolarLineGenerator(fundamental_matrix)
-epipoloar_line = epipolar_line_generator.get_epipolar_line_in_initial_image_from_point_in_final(coordinate_x, coordinate_y)
 x_init, y_init, x_final, y_final = epipoloar_line.from_image(image_final)
 
+#image_initial = cv2.undistort(image_initial, fundamental_matrix_generator.camera_matrix, fundamental_matrix_generator.distortion_coefficients)
+#image_final = cv2.undistort(image_final, fundamental_matrix_generator.camera_matrix, fundamental_matrix_generator.distortion_coefficients)
 
 image_initial = cv2.circle(image_initial, (int(coordinate_x), int(coordinate_y)), 4, (0, 255, 0), thickness=2)
 cv2.imshow(f'Point in image 1', image_initial)
