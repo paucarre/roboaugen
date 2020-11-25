@@ -41,34 +41,37 @@ class CameraCalibrator():
 
     def get_camera_matrix(self, image, mm):
         objp = np.zeros((6*7,3), np.float32)
-        #objp[:,:2] = np.mgrid[0:9,0:6].T.reshape(-1,2)*10
         objp[:,:2] = (np.mgrid[0:7,0:6].T.reshape(-1,2) * mm)
         #print(objp)
-        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 50, 0.001)
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10000000, 1e-30)
         objpoints = []
         imagepoints = []
         gray = cv2.cvtColor(image,cv2.COLOR_BGR2GRAY)
-        ret, corners = cv2.findChessboardCorners(gray, (7,6),None)
+        ret, corners = cv2.findChessboardCorners(gray, (7,6), None)
         if ret:
             objpoints.append(objp)
             corners2 = cv2.cornerSubPix(gray, corners,(11,11), (-1,-1), criteria)
             imagepoints.append(corners2)
             frame = cv2.drawChessboardCorners(image, (7,6), corners2,ret)
             # initial calibration
+            #ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, gray.shape[::-1],None, 4,None,None,cv2.CALIB_ZERO_TANGENT_DIST,
+
             ret, camera_matrix, distortion_coefficients, rotation_vectors, translation_vectors = \
-                cv2.calibrateCamera(objpoints, imagepoints, gray.shape[::-1], None, None)
+                cv2.calibrateCamera(objpoints, imagepoints, gray.shape[::-1], None, 4,None,None,cv2.CALIB_ZERO_TANGENT_DIST+cv2.CALIB_FIX_K3,criteria=criteria)
+
+
             # refine camera matrix cropping image
             height, width = gray.shape[0], image.shape[1]
             new_camera_matrix, region_of_interest = cv2.getOptimalNewCameraMatrix(camera_matrix, distortion_coefficients,\
-                (height, width), 1, (height, width))
+                (width, height), 1, (width, height))
             # undistort
             undistorted_gray = cv2.undistort(gray, camera_matrix, distortion_coefficients, None, new_camera_matrix)
             # crop the image
             region_x, region_y, region_w, region_h = region_of_interest
             undistorted_gray = undistorted_gray[region_y : region_y + region_h, region_x : region_x + region_w]
 
-            self.config.save_camera_parameters(new_camera_matrix, distortion_coefficients)
-            return new_camera_matrix, distortion_coefficients, frame, undistorted_gray
+            self.config.save_camera_parameters(camera_matrix, distortion_coefficients)
+            return camera_matrix, distortion_coefficients, frame, undistorted_gray
         else:
             print('No chessboard corners found in image')
         return None, None, None, None
@@ -76,10 +79,11 @@ class CameraCalibrator():
     def get_position_and_orientation(self, image, camera_matrix, distortion_coefficients):
         object_points = np.zeros(( 6 * 7, 3 ), np.float32)
         object_points[:,:2] = (np.mgrid [0:7, 0:6 ].T.reshape(-1, 2) * 5) - 15
-        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.00001)
         axis = np.float32([[0,0,0], [0,3,0], [3,3,0], [3,0,0],
                         [0,0,-3],[0,3,-3],[3,3,-3],[3,0,-3] ])
         gray = cv2.cvtColor(image,cv2.COLOR_BGR2GRAY)
+
         chessboard_is_found, corners = cv2.findChessboardCorners(gray, (7, 6), None)
         if chessboard_is_found:
             corners2 = cv2.cornerSubPix(gray, corners, (11, 11), (-1,-1), criteria)
@@ -96,7 +100,7 @@ class CameraCalibrator():
 
 @click.command()
 @click.option("--camera", default=0, help="OpenCV Camera index")
-@click.option("--mm", default=10, help="mm of the chessboard size")
+@click.option("--mm", default=20, help="mm of the chessboard size")
 def calibrate(camera, mm):
     Q_KEY_CODE = 113
     video_capture = cv2.VideoCapture(camera)
