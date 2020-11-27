@@ -59,7 +59,6 @@ class CameraCalibrator():
             ret, camera_matrix, distortion_coefficients, rotation_vectors, translation_vectors = \
                 cv2.calibrateCamera(objpoints, imagepoints, gray.shape[::-1], None, 4,None,None,cv2.CALIB_ZERO_TANGENT_DIST+cv2.CALIB_FIX_K3,criteria=criteria)
 
-
             # refine camera matrix cropping image
             height, width = gray.shape[0], image.shape[1]
             new_camera_matrix, region_of_interest = cv2.getOptimalNewCameraMatrix(camera_matrix, distortion_coefficients,\
@@ -67,13 +66,20 @@ class CameraCalibrator():
             # undistort
             undistorted_gray = cv2.undistort(gray, camera_matrix, distortion_coefficients, None, new_camera_matrix)
             # crop the image
-            region_x, region_y, region_w, region_h = region_of_interest
-            undistorted_gray = undistorted_gray[region_y : region_y + region_h, region_x : region_x + region_w]
+            #region_x, region_y, region_w, region_h = region_of_interest
+            #undistorted_gray = undistorted_gray[region_y : region_y + region_h, region_x : region_x + region_w]
+            ret, corners = cv2.findChessboardCorners(gray, (7,6), None)
+            if ret:
+                objpoints.append(objp)
+                corners2 = cv2.cornerSubPix(gray, corners,(11,11), (-1,-1), criteria)
+                imagepoints.append(corners2)
+                frame = cv2.drawChessboardCorners(image, (7,6), corners2,ret)
+                ret, camera_matrix_flat, distortion_coefficients_flat, rotation_vectors, translation_vectors = \
+                cv2.calibrateCamera(objpoints, imagepoints, gray.shape[::-1], None, 4,None,None,cv2.CALIB_ZERO_TANGENT_DIST+cv2.CALIB_FIX_K3,criteria=criteria)
+                self.config.save_camera_parameters(camera_matrix, distortion_coefficients)
+                return camera_matrix, distortion_coefficients, frame, undistorted_gray
 
-            self.config.save_camera_parameters(camera_matrix, distortion_coefficients)
-            return camera_matrix, distortion_coefficients, frame, undistorted_gray
-        else:
-            print('No chessboard corners found in image')
+        print('No chessboard corners found in image')
         return None, None, None, None
 
     def get_position_and_orientation(self, image, camera_matrix, distortion_coefficients):
