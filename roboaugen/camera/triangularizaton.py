@@ -155,7 +155,7 @@ if __name__ == '__main__':
 
     image_initial = camera.undistort_image(image_initial)
     image_final = camera.undistort_image(image_final)
-    threshold = 0.02
+    threshold = 0.05
     # perform inference
     inferencer = Inferencer(distort=False, keep_dimensions=True, use_cache=False, \
         mode='silco', max_background_objects=1, max_foreground_objects=1)
