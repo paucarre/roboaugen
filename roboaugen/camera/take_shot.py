@@ -5,7 +5,7 @@ import os
 import math
 import sys
 import click
-from roboaugen.camera.triangularizaton import Camera
+from roboaugen.camera.triangularizaton import CameraModel
 
 
 @click.command()
@@ -24,8 +24,8 @@ def take_shot(idx, destination_folder):
     while video_capture.isOpened():
         ret, image = video_capture.read()
         height, width = image.shape[0], image.shape[1]
-        camera = Camera(width, height)
-        image = camera.undistort_image(image)
+        camera_model = CameraModel(width, height)
+        image = camera_model.undistort_image(image)
         cv2.imshow('image', image)
         key = cv2.waitKey(1) & 0xff
         if key == Q_KEY_CODE:
