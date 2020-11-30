@@ -129,10 +129,11 @@ if __name__ == '__main__':
     camera = Camera(width, height)
     fundamental_matrix_generator = FundamentalMatrixGenerator(camera, camera_topology)
     fundamental_matrix = fundamental_matrix_generator.generate_fundamental_matrix(initial_state, final_state)
-    epipolar_line_generator = EpipolarLineGenerator(fundamental_matrix)
+    epipolar_line_generator = EpipolarLineGenerator(torch.from_numpy(fundamental_matrix))
 
 
-    coords = []
+    coords_initial = []
+    coords_final = []
     # A
     #coords.append((371, 367))
     #coords.append((373, 428))
@@ -143,14 +144,13 @@ if __name__ == '__main__':
     #coords.append((271, 417))
 
     # B
-    coords.append((405, 368))
-    coords.append((408, 427))
-    coords.append((419, 400))
-    coords.append((328, 419))
-    coords.append((327, 362))
-    coords.append((347, 342))
-    coords.append((416, 345))
-
+    #coords.append((405, 368))
+    #coords.append((408, 427))
+    #coords.append((419, 400))
+    #coords.append((328, 419))
+    #coords.append((327, 362))
+    #coords.append((347, 342))
+    #coords.append((416, 345))
 
 
     image_initial = camera.undistort_image(image_initial)
@@ -169,43 +169,95 @@ if __name__ == '__main__':
 
     visualize_query = query.clone()
     predicted_heatmaps = inferencer.get_model_inference(supports, query)
-    target_height, targe_width = predicted_heatmaps.size()[2], predicted_heatmaps.size()[3] # torch.Size([2, 3, 192, 256])
+    target_height, targe_width = predicted_heatmaps.size()[2], predicted_heatmaps.size()[3] # torch.Size([2, 3, 96, 128])
     factor = original_width / targe_width
-    coordinate_predictions = (predicted_heatmaps > threshold).nonzero()
-    coordinate_predictions[:, 2:] =  coordinate_predictions[:, 2:]  * factor
+    print(f'Original h/w {original_height}, {original_width} => Target h/w {target_height}, {targe_width}. Factors: {original_width / targe_width} | {original_height / target_height}')
+
+    #mean_probabilities = predicted_heatmaps.view(predicted_heatmaps.size()[0], -1).transpose(1, 0).mean(0)
+    #std_probabilities = predicted_heatmaps.view(predicted_heatmaps.size()[0], -1).transpose(1, 0).std(0)
+    #size = predicted_heatmaps.size()[2] * predicted_heatmaps.size()[3]
+    #mean_probabilities = mean_probabilities[:, None, None, None]
+    #std_probabilities = std_probabilities[:, None, None, None]
+    predicted_heatmaps = predicted_heatmaps * (predicted_heatmaps > threshold)# * mean_probabilities * (size * torch.sqrt(std_probabilities))))
+
+    coordinate_predictions = (predicted_heatmaps > 0.).nonzero()
+    coordinate_predictions_x = coordinate_predictions[:, 3] * factor
+    coordinate_predictions_y = coordinate_predictions[:, 2] * factor
+    coordinate_predictions[:, 2] = coordinate_predictions_x
+    coordinate_predictions[:, 3] = coordinate_predictions_y
+    #print(coordinate_predictions)
+
     # assume two images
-    #indices_initial_image = coordinate_predictions.nonzero(coordinate_predictions[:, 0] == 0)
     indices_initial_image = (coordinate_predictions[:, 0] == 0).nonzero()[:, 0]
     predictions_initial_image = coordinate_predictions[indices_initial_image, :]
     coordinates_initial_image = predictions_initial_image[:, 2:]
     ones = coordinates_initial_image.new_ones(coordinates_initial_image[:, 0:1].size())
     coordinates_initial_image = torch.cat([coordinates_initial_image, ones], 1).transpose(0, 1)
-    epipolar_lines_in_final = epipolar_line_generator.\
-        get_epipolar_lines_in_final_image_from_points_in_initial(coordinates_initial_image.numpy())
-    print(epipolar_lines_in_final)
 
-    #coordinates_initial_image = coordinate_predictions[0, :, :, :]
-    #coordinates_final_image = coordinate_predictions[1, :, :, :]
-    # get the epipolar lines for all the points in the initial image
-    #epipolar_lines_in_final = epipolar_line_generator.get_epipolar_lines_in_final_image_from_points_in_initial(coordinates_initial_image[:, 1:])
-    #print(epipolar_lines_in_final)
+    indices_final_image = (coordinate_predictions[:, 0] == 1).nonzero()[:, 0]
+    predictions_final_image = coordinate_predictions[indices_final_image, :]
+    coordinates_final_image = predictions_final_image[:, 2:]
+    ones = coordinates_final_image.new_ones(coordinates_final_image[:, 0:1].size())
+    coordinates_final_image = torch.cat([coordinates_final_image, ones], 1).transpose(0, 1)
+
+    epipolar_lines_in_final = epipolar_line_generator.\
+        get_epipolar_lines_in_final_image_from_points_in_initial(coordinates_initial_image)
+    #print(coordinates_initial_image.numpy().T)
+    #print(epipolar_lines_in_final.shape)
+
+    #print(predictions_initial_image)
+    threshold = 10.
+    for keypoint_type in range(predicted_heatmaps.size()[1]):
+        print(f'Getting matches for keypoint type index {keypoint_type}')
+        indices_initial_keypoint = (predictions_initial_image[:, 1] == keypoint_type).nonzero()
+        indices_final_keypoint = (predictions_final_image[:, 1] == keypoint_type).nonzero()
+        if indices_initial_keypoint.size()[0] > 0 and indices_final_keypoint.size()[0] > 0:
+            indices_initial_keypoint = indices_initial_keypoint[:, 0]
+            indices_final_keypoint = indices_final_keypoint[:, 0]
+            epipolar_lines = epipolar_lines_in_final[indices_initial_keypoint].double()
+            points = coordinates_final_image[:, indices_final_keypoint].double()
+            print(points[0,:].max())
+            print(points[1,:].max())
+            distances_initial_to_final = epipolar_lines @ points
+            distances_initial_to_final = torch.sqrt(distances_initial_to_final ** 2)
+            distances_initial_to_final_indices = (distances_initial_to_final < threshold).nonzero()
+            matches = distances_initial_to_final_indices.size()[0]
+            if matches > 0:
+                print(f'\t{matches} matches found from original initial {distances_initial_to_final.size()[0]} points and {distances_initial_to_final.size()[1]} final points.')
+                minimum_distances, minimum_initial_index_by_final = torch.min(distances_initial_to_final, dim=0)
+                minimum_distance, minimum_final_index = torch.min(minimum_distances, dim=0)
+                minimum_initial_index = minimum_initial_index_by_final[minimum_final_index]
+                print(f'\tOptimal match of value {minimum_distance:0.3} from initial index {minimum_initial_index} and final index {minimum_final_index}')
+                coordinates_initial = predictions_initial_image[indices_initial_keypoint[minimum_initial_index], 2:]
+                print(f'\tCoordinate on initial image: {coordinates_initial}')
+                coords_initial.append((coordinates_initial[0], coordinates_initial[1]))
+                coordinates_final = predictions_final_image[indices_final_keypoint[minimum_final_index], 2:]
+                print(f'\tCoordinate on final image: {coordinates_final}')
+                coords_final.append((coordinates_final[0], coordinates_final[1]))
+            else:
+                print(f'\tNo matches found')
+
+
+
 
 
 
     for idx, image in enumerate(images):
-        inferencer.display_results(f'Inference {idx}', visualize_query[idx: idx + 1], None, predicted_heatmaps[idx: idx + 1], threshold=threshold)
+        inferencer.display_results(f'Inference {idx}', visualize_query[idx: idx + 1], None, predicted_heatmaps[idx: idx + 1], threshold=0.0)
     cv2.waitKey(0)
 
-    hues = torch.arange(start=0,end=179., step = 179 / (len(coords) + 1) )  # H: 0-179, S: 0-255, V: 0-255.
+    hues = torch.arange(start=0,end=179., step = 179 / (len(coords_initial) + 1) )  # H: 0-179, S: 0-255, V: 0-255.
     colors = [Color(hsl=(hue/180, 1, 0.5)).rgb for hue in hues]
     colors = [(int(color[0] * 255), int(color[1] * 255), int(color[2] * 255)) for color in colors]
-    for idx, coord in enumerate(coords):
+    for idx, coord in enumerate(coords_initial):
         color = colors[idx]
         coordinate_x, coordinate_y = coord
         epipoloar_line = epipolar_line_generator.get_epipolar_line_in_final_image_from_point_in_initial(coordinate_x, coordinate_y)
         x_init, y_init, x_final, y_final = epipoloar_line.from_image(image_final)
         image_final = cv2.line(image_final, (x_init, y_init), (x_final, y_final), color, thickness=2)
         image_initial = cv2.circle(image_initial, (int(coordinate_x), int(coordinate_y)), 4, color, thickness=2)
+        coordinate_x, coordinate_y = coords_final[idx]
+        image_final = cv2.circle(image_final, (int(coordinate_x), int(coordinate_y)), 4, color, thickness=2)
 
 
     cv2.imshow(f'Point in image 1', image_initial)
@@ -214,4 +266,3 @@ if __name__ == '__main__':
     cv2.imshow(f'Epipolar line in second image', image_final)
 
     cv2.waitKey(0)
-

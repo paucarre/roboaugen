@@ -49,9 +49,10 @@ class Trainer():
     heatmap_target = ((target_heatmaps - predicted_heatmaps) ** 2)  #* (1.0 - spatial_penalty)
     return (heatmap_target.data * heatmap_target).mean()
 
-  def save_train_state(self, epoch, optimizer_higher_resolution, optimizer_silco):
+  def save_train_state(self, epoch, current_iteration, optimizer_higher_resolution, optimizer_silco):
     torch.save({
                 'epoch': epoch,
+                'current_iteration': current_iteration,
                 'optimizer_higher_resolution_state_dict': optimizer_higher_resolution.state_dict(),
                 'optimizer_silco_state_dict': optimizer_silco.state_dict()
                 }, self.config.train_state_path)
@@ -60,6 +61,7 @@ class Trainer():
     #optimizer = DiffGrad(self.backbone.parameters(), lr = self.learning_rate, betas=(0.9, 0.999), eps=1e-8, weight_decay=0)
     optimizer_higher_resolution = DiffGrad(self.higher_resolution.parameters(), lr = self.learning_rate, betas=(0.9, 0.999), eps=1e-8, weight_decay=0)
     optimizer_silco = DiffGrad(self.silco.parameters(), lr = self.learning_rate, betas=(0.9, 0.999), eps=1e-8, weight_decay=0)
+    current_iteration = 0
     epoch = -1
     if os.path.exists(self.config.train_state_path):
       checkpoint = torch.load(self.config.train_state_path)
@@ -67,15 +69,16 @@ class Trainer():
       optimizer_higher_resolution.load_state_dict(checkpoint['optimizer_higher_resolution_state_dict'])
       optimizer_silco.load_state_dict(checkpoint['optimizer_silco_state_dict'])
       epoch = checkpoint['epoch']
+      current_iteration = checkpoint['current_iteration'] if 'current_iteration' in checkpoint else 0
     #return optimizer, optimizer_higher_resolution, optimizer_silco, epoch
-    return optimizer_higher_resolution, optimizer_silco, epoch
+    return optimizer_higher_resolution, optimizer_silco, epoch, current_iteration
 
-  def log(self, epoch, epochs, batch_index, batches, batches_in_epoch, losses):
+  def log(self, current_iteration, losses):
     #self.logger.info(f'Epoch {epoch + 1}/{epochs} | Batch {batch_index + 1}/{batches}')
-    self.roboaugen_writer.add_scalar('Training Loss', losses['total_loss'], ( epoch * batches_in_epoch )  + batch_index)
-    self.roboaugen_writer.add_scalar('MSE Loss', losses['mse_loss'], ( epoch * batches_in_epoch )  + batch_index)
-    self.roboaugen_writer.add_scalar('Spatial Entropy Loss', losses['spatial_location_entropy_loss'], ( epoch * batches_in_epoch )  + batch_index)
-    self.roboaugen_writer.add_scalar('Feature Entropy Loss', losses['feature_entropy_loss'], ( epoch * batches_in_epoch)  + batch_index)
+    self.roboaugen_writer.add_scalar('Training Loss', losses['total_loss'], current_iteration )
+    self.roboaugen_writer.add_scalar('MSE Loss', losses['mse_loss'], current_iteration )
+    self.roboaugen_writer.add_scalar('Spatial Entropy Loss', losses['spatial_location_entropy_loss'], current_iteration )
+    self.roboaugen_writer.add_scalar('Feature Entropy Loss', losses['feature_entropy_loss'], current_iteration )
 
   def save_models(self):
     self.config.save_mobilenet_model(self.backbone)
@@ -102,9 +105,10 @@ class Trainer():
     self.higher_resolution.train()
     self.higher_resolution.cuda()
 
-    optimizer_higher_resolution, optimizer_silco, epoch_start = self.load_train_state()
+    optimizer_higher_resolution, optimizer_silco, epoch_start, current_iteration = self.load_train_state()
     train_loader = None
     batches = None
+    epoch_start = 0
     print(f'Starting with epoch {epoch_start + 1} with a total of {epochs} epochs')
     for epoch in range(epoch_start + 1, epochs):
       if train_loader is None or (epoch + 1) % self.config.save_each_epoch == 0:
@@ -141,10 +145,11 @@ class Trainer():
           optimizer_higher_resolution.step()
         if mode == 'silco' or mode == 'both':
           optimizer_silco.step()
-        self.log(epoch, epochs, batch_index, batches, len(train_loader), losses)
+        self.log(current_iteration, losses)
+        current_iteration += 1
         if (batch_index + 1) % self.config.save_each == 0:
           self.save_models()
-          self.save_train_state(epoch, optimizer_higher_resolution, optimizer_silco)
+          self.save_train_state(epoch_start, current_iteration, optimizer_higher_resolution, optimizer_silco)
       if (epoch + 1) % self.config.save_each_epoch == 0:
         self.save_models()
 
