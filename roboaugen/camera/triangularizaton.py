@@ -1,7 +1,9 @@
 from roboaugen.core.config import Config
 from roboaugen.model.inference import Inferencer
+from roboaugen.camera.transformation_estimator import ProcrustesProblemSolver
 from robotcontroller.kinematics import RobotTopology, RobotState
 from robotcontroller.ik import IkSolver, RobotForwardKinematics
+
 
 import numpy as np
 import cv2
@@ -198,6 +200,9 @@ class EpipolarMatch():
         self.coord_final = coord_final
         self.minimum_distance = minimum_distance
 
+    def __repr__(self):
+        return str(self.__dict__)
+
 if __name__ == '__main__':
     config = Config()
 
@@ -207,7 +212,7 @@ if __name__ == '__main__':
     image_final = config.get_image_from_path(image_final_path)
     height, width = image_final.shape[0], image_final.shape[1]
 
-    camera_topology = RobotTopology(l1=142, l2=142, l3=80, h1=50, angle_wide_1=180, angle_wide_2=180 + 90, angle_wide_3=180 + 90)
+    camera_topology = RobotTopology(l1=142, l2=142, l3=60, h1=50, angle_wide_1=180, angle_wide_2=180 + 90, angle_wide_3=180 + 90)
     robot_forward_kinamatics = RobotForwardKinematics(camera_topology)
 
     #nothing_state = RobotState(linear_1=5, angle_1=to_radians(0.), angle_2=to_radians(0.), angle_3=to_radians(0.))
@@ -251,6 +256,7 @@ if __name__ == '__main__':
     image_final = camera_model.undistort_image(image_final)
     threshold = 0.1
     # perform inference
+    '''
     inferencer = Inferencer(distort=False, keep_dimensions=True, use_cache=False, \
         mode='silco', max_background_objects=1, max_foreground_objects=1)
     supports_folder = 'test/images/'
@@ -269,7 +275,20 @@ if __name__ == '__main__':
 
     keypoint_matcher = KeypointMatcher()
     keypoint_to_matches = keypoint_matcher.get_matches_from_predictions(predicted_heatmaps,\
-        scale, prediction_threshold = 0.05, epipolar_threshold = 1.)
+        scale, prediction_threshold = 0.04, epipolar_threshold = 1.)
+    '''
+    keypoint_matcher = KeypointMatcher()
+    keypoint_to_matches = { \
+            0: [],
+            1: [],
+            2: [EpipolarMatch((torch.tensor(340), torch.tensor(340)), (torch.tensor(265), torch.tensor(355)), torch.tensor(0.5098, dtype=torch.float64))],
+            3: [],
+            4: [EpipolarMatch((torch.tensor(410), torch.tensor(425)), (torch.tensor(375), torch.tensor(430)), torch.tensor(0.0325, dtype=torch.float64))],
+            5: [EpipolarMatch((torch.tensor(330), torch.tensor(420)), (torch.tensor(290), torch.tensor(445)), torch.tensor(0.2665, dtype=torch.float64))],
+            6: [],
+            7: [EpipolarMatch((torch.tensor(410), torch.tensor(360)), (torch.tensor(365), torch.tensor(365)), torch.tensor(0.5897, dtype=torch.float64))]
+        }
+    print(keypoint_to_matches)
     keypoint_matcher.draw_keypoint_matches(keypoint_to_matches, image_initial, image_final)
 
     triangularization_threshold = 1000.
@@ -283,6 +302,8 @@ if __name__ == '__main__':
     #projection_matrix = np.concatenate((initial_projection_matrix, final_projection_matrix), axis=0)
     #print(projection_matrix.shape)
     #print(final_camera_matrix.shape)
+
+    points_predicted = []
     for keypoint in range(config.num_vertices):
         if keypoint in keypoint_to_matches:
             matches = keypoint_to_matches[keypoint]
@@ -297,13 +318,11 @@ if __name__ == '__main__':
                 point = nullspace / nullspace[3]
                 triangularization_error = s[3]
                 if triangularization_error < triangularization_threshold:
-                    print(point, s[3])
+                    #print(point, s[3])
+                    points_predicted.append(point[:3])
+                else:
+                    points_predicted.append(None)
 
-                #print(np.linalg.norm(vector_space @ nullspace), s[3])
-
-                #print(points_cross_matrix.shape, projection_matrix.shape)
-                #pints_cross_projection = points_cross_matrix @ projection_matrix
-                #print(pints_cross_projection.shape)
 
                 '''
                 epipoloar_line = epipolar_line_generator.get_epipolar_line_in_final_image_from_point_in_initial(match.coord_initial[0], match.coord_initial[1])
@@ -312,15 +331,20 @@ if __name__ == '__main__':
                 image_initial = cv2.circle(image_initial, (int(match.coord_initial[0]), int(match.coord_initial[1])), 4, color, thickness=2)
                 image_final = cv2.circle(image_final, (int(match.coord_final[0]), int(match.coord_final[1])), 4, color, thickness=2)
                 '''
-
+    print('points_predicted: ', points_predicted)
+    procrustes_problem_solver = ProcrustesProblemSolver()
+    solution = procrustes_problem_solver.solve(points_predicted)
+    print('solution: ', solution)
 
     cv2.imshow(f'Point in image 1', image_initial)
     cv2.namedWindow(f'Point in image 1')
     cv2.setMouseCallback(f'Point in image 1', print_coordinates)
     cv2.imshow(f'Epipolar line in second image', image_final)
 
-
+    '''
     predicted_heatmaps = predicted_heatmaps * (predicted_heatmaps > 0.05)
     for idx, image in enumerate(images):
         inferencer.display_results(f'Inference {idx}', visualize_query[idx: idx + 1], None, predicted_heatmaps[idx: idx + 1], threshold=0.0)
+    '''
+
     cv2.waitKey(0)
