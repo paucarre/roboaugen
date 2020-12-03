@@ -29,11 +29,8 @@ class CameraModel():
             None, \
             self.undistorted_camera_matrix)
 
-class FundamentalMatrixGenerator():
 
-    def __init__(self, camera, camera_topology):
-        self.camera = camera
-        self.camera_topology = camera_topology
+class MathUtils():
 
     @staticmethod
     def skew(x):
@@ -41,13 +38,19 @@ class FundamentalMatrixGenerator():
                         [x[2], 0, -x[0]],
                         [-x[1], x[0], 0]])
 
+class FundamentalMatrixGenerator():
+
+    def __init__(self, camera, camera_topology):
+        self.camera = camera
+        self.forward_kinematics = RobotForwardKinematics(camera_topology)
+
     def generate_fundamental_matrix(self, initial_state, final_state):
-        initial_transformation = robot_forward_kinamatics.get_transformation(initial_state)
-        final_transformation = robot_forward_kinamatics.get_transformation(final_state)
+        initial_transformation = self.forward_kinematics.get_transformation(initial_state)
+        final_transformation = self.forward_kinematics.get_transformation(final_state)
         final_viewed_from_initial = np.linalg.inv(initial_transformation) @ final_transformation
         translation = final_viewed_from_initial[0:3, 3]
         rotation = final_viewed_from_initial[0:3, 0:3]
-        essential_matrix = FundamentalMatrixGenerator.skew(translation) @ rotation
+        essential_matrix = MathUtils.skew(translation) @ rotation
         inverse_camera_matrix = np.linalg.inv(self.camera.undistorted_camera_matrix @ self.camera.trans_robot_to_camera_rotation)
         fundamental_matrix = inverse_camera_matrix.T @ essential_matrix @ inverse_camera_matrix
         return fundamental_matrix
@@ -63,15 +66,15 @@ class EpipolarLineGenerator():
         self.fundamental_matrix = fundamental_matrix
 
     def get_epipolar_line_in_initial_image_from_point_in_final(self, coordinate_x, coordinate_y):
-        epipolar_line  = fundamental_matrix @ np.array([coordinate_x, coordinate_y, 1])
+        epipolar_line  = self.fundamental_matrix @ np.array([coordinate_x, coordinate_y, 1])
         return EpipolarLine(epipolar_line)
 
     def get_epipolar_line_in_final_image_from_point_in_initial(self, coordinate_x, coordinate_y):
-        epipolar_line  = np.array([coordinate_x, coordinate_y, 1]).T @ fundamental_matrix
+        epipolar_line  = np.array([coordinate_x, coordinate_y, 1]).T @ self.fundamental_matrix.numpy()
         return EpipolarLine(epipolar_line)
 
     def get_epipolar_lines_in_final_image_from_points_in_initial(self, points):
-        epipolar_lines  = points.T @ fundamental_matrix
+        epipolar_lines  = points.T.double() @ self.fundamental_matrix
         return epipolar_lines
 
 class EpipolarLine():
@@ -109,8 +112,9 @@ def print_coordinates(event,x,y,flags,param):
 
 class KeypointMatcher():
 
-    def __init__(self):
+    def __init__(self, epipolar_line_generator):
         self.config = Config()
+        self.epipolar_line_generator = epipolar_line_generator
 
     def get_coordinate_predictions(self, predicted_heatmaps, scale):
         coordinate_predictions = (predicted_heatmaps > 0.).nonzero()
@@ -137,7 +141,7 @@ class KeypointMatcher():
         predictions_initial_image, coordinates_initial_image = self.get_predictions_in_image_index(0, coordinate_predictions)
         predictions_final_image, coordinates_final_image = self.get_predictions_in_image_index(1, coordinate_predictions)
 
-        epipolar_lines_in_final = epipolar_line_generator.\
+        epipolar_lines_in_final = self.epipolar_line_generator.\
             get_epipolar_lines_in_final_image_from_points_in_initial(coordinates_initial_image)
 
         keypoint_to_matches = {}
@@ -181,7 +185,7 @@ class KeypointMatcher():
         for keypoint in keypoint_to_matches:
             color = colors[keypoint]
             for match in keypoint_to_matches[keypoint]:
-                epipoloar_line = epipolar_line_generator.get_epipolar_line_in_final_image_from_point_in_initial(match.coord_initial[0], match.coord_initial[1])
+                epipoloar_line = self.epipolar_line_generator.get_epipolar_line_in_final_image_from_point_in_initial(match.coord_initial[0], match.coord_initial[1])
                 x_init, y_init, x_final, y_final = epipoloar_line.from_image(image_final)
                 image_final = cv2.line(image_final, (x_init, y_init), (x_final, y_final), color, thickness=2)
                 image_initial = cv2.circle(image_initial, (int(match.coord_initial[0]), int(match.coord_initial[1])), 4, color, thickness=2)
@@ -203,7 +207,47 @@ class EpipolarMatch():
     def __repr__(self):
         return str(self.__dict__)
 
-if __name__ == '__main__':
+class Triangularizer():
+
+    def __init__(self, camera_model, camera_robot_topology):
+        self.config = Config()
+        self.camera_matrix = camera_model.undistorted_camera_matrix @ camera_model.trans_robot_to_camera_rotation
+        self.forward_kinematics = RobotForwardKinematics(camera_robot_topology)
+
+    def triangularize(self, initial_state, final_state, keypoint_to_matches, triangularization_threshold=100.):
+
+        initial_transformation = self.forward_kinematics.get_transformation(initial_state)
+        final_transformation = self.forward_kinematics.get_transformation(final_state)
+        initial_projection_matrix = self.camera_matrix @ initial_transformation[:3,:]
+        final_projection_matrix = self.camera_matrix @ final_transformation[:3,:]
+
+        points_predicted = []
+        for keypoint in range(self.config.num_vertices):
+            match_found = False
+            if keypoint in keypoint_to_matches:
+                matches = keypoint_to_matches[keypoint]
+                for match in matches:
+                    coord_initial = MathUtils.skew([match.coord_initial[0], match.coord_initial[1], 1])
+                    coord_final = MathUtils.skew([match.coord_final[0], match.coord_final[1], 1])
+                    vector_space_initial = coord_initial @ initial_projection_matrix
+                    vector_space_final   = coord_final   @ final_projection_matrix
+                    vector_space = np.concatenate((vector_space_initial, vector_space_final), axis=0)
+                    u, s, vh = np.linalg.svd(vector_space)
+                    nullspace = vh[3, :]
+                    point = nullspace / nullspace[3]
+
+                    triangularization_error = s[3]
+                    if triangularization_error < triangularization_threshold:
+                        #print(point, s[3])
+                        points_predicted.append(point[:3])
+                        match_found = True
+            if not match_found:
+                points_predicted.append(None)
+
+        return points_predicted
+
+
+def test():
     config = Config()
 
     image_initial_path = '/home/rusalka/Pictures/Webcam/first.jpg'
@@ -213,7 +257,7 @@ if __name__ == '__main__':
     height, width = image_final.shape[0], image_final.shape[1]
 
     camera_topology = RobotTopology(l1=142, l2=142, l3=60, h1=50, angle_wide_1=180, angle_wide_2=180 + 90, angle_wide_3=180 + 90)
-    robot_forward_kinamatics = RobotForwardKinematics(camera_topology)
+
 
     #nothing_state = RobotState(linear_1=5, angle_1=to_radians(0.), angle_2=to_radians(0.), angle_3=to_radians(0.))
     #nothing_transformation = robot_forward_kinamatics.get_transformation(nothing_state)
@@ -272,68 +316,15 @@ if __name__ == '__main__':
     scale = original_width / targe_width
     print(f'Original h/w {original_height}, {original_width} => Target h/w {target_height}, {targe_width}. Scales: {original_width / targe_width} | {original_height / target_height}')
 
-    keypoint_matcher = KeypointMatcher()
+    keypoint_matcher = KeypointMatcher(epipolar_line_generator)
     keypoint_to_matches = keypoint_matcher.get_matches_from_predictions(predicted_heatmaps,\
         scale, prediction_threshold = 0.04, epipolar_threshold = 1.)
-    '''
-    keypoint_matcher = KeypointMatcher()
-    keypoint_to_matches = { \
-            0: [],
-            1: [],
-            2: [EpipolarMatch((torch.tensor(340), torch.tensor(340)), (torch.tensor(265), torch.tensor(355)), torch.tensor(0.5098, dtype=torch.float64))],
-            3: [],
-            4: [EpipolarMatch((torch.tensor(410), torch.tensor(425)), (torch.tensor(375), torch.tensor(430)), torch.tensor(0.0325, dtype=torch.float64))],
-            5: [EpipolarMatch((torch.tensor(330), torch.tensor(420)), (torch.tensor(290), torch.tensor(445)), torch.tensor(0.2665, dtype=torch.float64))],
-            6: [],
-            7: [EpipolarMatch((torch.tensor(410), torch.tensor(360)), (torch.tensor(365), torch.tensor(365)), torch.tensor(0.5897, dtype=torch.float64))]
-        }
-    print(keypoint_to_matches)
-    '''
 
     keypoint_matcher.draw_keypoint_matches(keypoint_to_matches, image_initial, image_final)
-
-    triangularization_threshold = 1000.
-    camera_model = CameraModel(width, height)
-    camera_matrix = camera_model.undistorted_camera_matrix @ camera_model.trans_robot_to_camera_rotation
-    # camera_matrix = np.concatenate((camera_matrix, np.array([[0], [0], [0]])), axis=1)
-    initial_transformation = robot_forward_kinamatics.get_transformation(initial_state)
-    final_transformation = robot_forward_kinamatics.get_transformation(final_state)
-    initial_projection_matrix = camera_matrix @ initial_transformation[:3,:]
-    final_projection_matrix = camera_matrix @ final_transformation[:3,:]
-    #print(projection_matrix.shape)
-    #print(final_camera_matrix.shape)
-
-    points_predicted = []
-    for keypoint in range(config.num_vertices):
-        match_found = False
-        if keypoint in keypoint_to_matches:
-            matches = keypoint_to_matches[keypoint]
-            for match in matches:
-                coord_initial = FundamentalMatrixGenerator.skew([match.coord_initial[0], match.coord_initial[1], 1])
-                coord_final = FundamentalMatrixGenerator.skew([match.coord_final[0], match.coord_final[1], 1])
-                vector_space_initial = coord_initial @ initial_projection_matrix
-                vector_space_final   = coord_final   @ final_projection_matrix
-                vector_space = np.concatenate((vector_space_initial, vector_space_final), axis=0)
-                u, s, vh = np.linalg.svd(vector_space)
-                nullspace = vh[3, :]
-                point = nullspace / nullspace[3]
-
-                triangularization_error = s[3]
-                if triangularization_error < triangularization_threshold:
-                    print(point, s[3])
-                    points_predicted.append(point[:3])
-                    match_found = True
-        if not match_found:
-            points_predicted.append(None)
+    triangularizer = Triangularizer(camera_model, camera_topology)
+    points_predicted = triangularizer.triangularize(initial_state, final_state, keypoint_to_matches, triangularization_threshold=100.)
 
 
-    '''
-    epipoloar_line = epipolar_line_generator.get_epipolar_line_in_final_image_from_point_in_initial(match.coord_initial[0], match.coord_initial[1])
-    x_init, y_init, x_final, y_final = epipoloar_line.from_image(image_final)
-    image_final = cv2.line(image_final, (x_init, y_init), (x_final, y_final), color, thickness=2)
-    image_initial = cv2.circle(image_initial, (int(match.coord_initial[0]), int(match.coord_initial[1])), 4, color, thickness=2)
-    image_final = cv2.circle(image_final, (int(match.coord_final[0]), int(match.coord_final[1])), 4, color, thickness=2)
-    '''
     print('points_predicted: ', points_predicted)
     procrustes_problem_solver = ProcrustesProblemSolver()
     solution = procrustes_problem_solver.solve(points_predicted, 20.)
@@ -344,10 +335,14 @@ if __name__ == '__main__':
     cv2.setMouseCallback(f'Point in image 1', print_coordinates)
     cv2.imshow(f'Epipolar line in second image', image_final)
 
-    '''
+
     predicted_heatmaps = predicted_heatmaps * (predicted_heatmaps > 0.05)
     for idx, image in enumerate(images):
         inferencer.display_results(f'Inference {idx}', visualize_query[idx: idx + 1], None, predicted_heatmaps[idx: idx + 1], threshold=0.0)
-    '''
+
 
     cv2.waitKey(0)
+
+if __name__ == '__main__':
+    test()
+
