@@ -206,8 +206,8 @@ class EpipolarMatch():
 if __name__ == '__main__':
     config = Config()
 
-    image_final_path = '/home/rusalka/Pictures/Webcam/first.jpg'
-    image_initial_path = '/home/rusalka/Pictures/Webcam/second.jpg'
+    image_initial_path = '/home/rusalka/Pictures/Webcam/first.jpg'
+    image_final_path = '/home/rusalka/Pictures/Webcam/second.jpg'
     image_initial = config.get_image_from_path(image_initial_path)
     image_final = config.get_image_from_path(image_final_path)
     height, width = image_final.shape[0], image_final.shape[1]
@@ -220,8 +220,8 @@ if __name__ == '__main__':
     #initial_state = RobotState(linear_1=5, angle_1=to_radians(0.), angle_2=to_radians(0.), angle_3=to_radians(0.))
     #final_state   = RobotState(linear_1=5, angle_1=to_radians(0.), angle_2=to_radians(-90.), angle_3=to_radians(0.))
 
-    final_state = RobotState(linear_1=5, angle_1=to_radians(0.), angle_2=to_radians(70.), angle_3=to_radians(-20.))
-    initial_state   = RobotState(linear_1=5, angle_1=to_radians(0.), angle_2=to_radians(-90.), angle_3=to_radians(20.))
+    initial_state = RobotState(linear_1=5, angle_1=to_radians(0.), angle_2=to_radians(70.), angle_3=to_radians(-20.))
+    final_state   = RobotState(linear_1=5, angle_1=to_radians(0.), angle_2=to_radians(-90.), angle_3=to_radians(20.))
 
 
     camera_model = CameraModel(width, height)
@@ -256,7 +256,6 @@ if __name__ == '__main__':
     image_final = camera_model.undistort_image(image_final)
     threshold = 0.1
     # perform inference
-    '''
     inferencer = Inferencer(distort=False, keep_dimensions=True, use_cache=False, \
         mode='silco', max_background_objects=1, max_foreground_objects=1)
     supports_folder = 'test/images/'
@@ -289,22 +288,24 @@ if __name__ == '__main__':
             7: [EpipolarMatch((torch.tensor(410), torch.tensor(360)), (torch.tensor(365), torch.tensor(365)), torch.tensor(0.5897, dtype=torch.float64))]
         }
     print(keypoint_to_matches)
+    '''
+
     keypoint_matcher.draw_keypoint_matches(keypoint_to_matches, image_initial, image_final)
 
     triangularization_threshold = 1000.
     camera_model = CameraModel(width, height)
     camera_matrix = camera_model.undistorted_camera_matrix @ camera_model.trans_robot_to_camera_rotation
-    camera_matrix = np.concatenate((camera_matrix, np.array([[0], [0], [0]])), axis=1)
+    # camera_matrix = np.concatenate((camera_matrix, np.array([[0], [0], [0]])), axis=1)
     initial_transformation = robot_forward_kinamatics.get_transformation(initial_state)
     final_transformation = robot_forward_kinamatics.get_transformation(final_state)
-    initial_projection_matrix = camera_matrix @ initial_transformation
-    final_projection_matrix = camera_matrix @ final_transformation
-    #projection_matrix = np.concatenate((initial_projection_matrix, final_projection_matrix), axis=0)
+    initial_projection_matrix = camera_matrix @ initial_transformation[:3,:]
+    final_projection_matrix = camera_matrix @ final_transformation[:3,:]
     #print(projection_matrix.shape)
     #print(final_camera_matrix.shape)
 
     points_predicted = []
     for keypoint in range(config.num_vertices):
+        match_found = False
         if keypoint in keypoint_to_matches:
             matches = keypoint_to_matches[keypoint]
             for match in matches:
@@ -316,24 +317,26 @@ if __name__ == '__main__':
                 u, s, vh = np.linalg.svd(vector_space)
                 nullspace = vh[3, :]
                 point = nullspace / nullspace[3]
+
                 triangularization_error = s[3]
                 if triangularization_error < triangularization_threshold:
-                    #print(point, s[3])
+                    print(point, s[3])
                     points_predicted.append(point[:3])
-                else:
-                    points_predicted.append(None)
+                    match_found = True
+        if not match_found:
+            points_predicted.append(None)
 
 
-                '''
-                epipoloar_line = epipolar_line_generator.get_epipolar_line_in_final_image_from_point_in_initial(match.coord_initial[0], match.coord_initial[1])
-                x_init, y_init, x_final, y_final = epipoloar_line.from_image(image_final)
-                image_final = cv2.line(image_final, (x_init, y_init), (x_final, y_final), color, thickness=2)
-                image_initial = cv2.circle(image_initial, (int(match.coord_initial[0]), int(match.coord_initial[1])), 4, color, thickness=2)
-                image_final = cv2.circle(image_final, (int(match.coord_final[0]), int(match.coord_final[1])), 4, color, thickness=2)
-                '''
+    '''
+    epipoloar_line = epipolar_line_generator.get_epipolar_line_in_final_image_from_point_in_initial(match.coord_initial[0], match.coord_initial[1])
+    x_init, y_init, x_final, y_final = epipoloar_line.from_image(image_final)
+    image_final = cv2.line(image_final, (x_init, y_init), (x_final, y_final), color, thickness=2)
+    image_initial = cv2.circle(image_initial, (int(match.coord_initial[0]), int(match.coord_initial[1])), 4, color, thickness=2)
+    image_final = cv2.circle(image_final, (int(match.coord_final[0]), int(match.coord_final[1])), 4, color, thickness=2)
+    '''
     print('points_predicted: ', points_predicted)
     procrustes_problem_solver = ProcrustesProblemSolver()
-    solution = procrustes_problem_solver.solve(points_predicted)
+    solution = procrustes_problem_solver.solve(points_predicted, 20.)
     print('solution: ', solution)
 
     cv2.imshow(f'Point in image 1', image_initial)

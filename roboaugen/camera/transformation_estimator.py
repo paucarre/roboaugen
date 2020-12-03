@@ -40,7 +40,7 @@ class ProcrustesSolution():
 class ProcrustesProblemSolver():
 
     def __init__(self):
-        self.model_points = np.array([ \
+        self.shape_points = np.array([ \
                 [-40.,  40.,   0.],
                 [-40., -40.,   0.],
                 [-40., -40.,  55.],
@@ -49,19 +49,30 @@ class ProcrustesProblemSolver():
                 [ 40., -40.,   0.],
                 [ 40., -40.,  55.],
                 [ 40.,  40.,  55.]])
-        center = self.model_points.mean(0)
-        self.model_points = self.model_points - center
-        self.shape_lenght = np.linalg.norm(self.model_points, axis=1)
+        center = self.shape_points.mean(0)
+        self.shape_points = self.shape_points - center
+        #self.shape_length = np.linalg.norm(self.shape_points, axis=1)
+        self.shape_point_distances = self.compute_point_distances(self.shape_points)
 
-    def solution_attempt(self, predicted_points, lenght_perc_threshold = 0.1):
+    def compute_point_distances(self, points):
+        points_replicated = np.expand_dims(points, axis=0)
+        points_replicated = np.repeat(points_replicated, points.shape[0], axis=0)
+        point_distances = points_replicated - np.swapaxes(points_replicated, 0, 1)
+        point_distances = point_distances.reshape(point_distances.shape[0] * point_distances.shape[1], 3)
+        point_distances = np.linalg.norm(point_distances, axis=1)
+        point_distances = point_distances.reshape(points.shape[0], points.shape[0])
+        return point_distances
+
+
+    def solution_attempt(self, predicted_points, length_threshold):
         #
         # predicted_points =  R @ points
         # R = U @ V.T where U @ S @ V.T = SVD( predicted_points @ points.T )
         #
         keypoints_with_values = [idx for idx, point in enumerate(predicted_points) if point is not None]
         if len(keypoints_with_values) >= 3:
-            shape_points_with_matching_predictions = self.model_points[keypoints_with_values]
-            shape_lenght_with_matching_predictions = self.shape_lenght[keypoints_with_values]
+            shape_points_with_matching_predictions = self.shape_points[keypoints_with_values]
+            #shape_length_with_matching_predictions = self.shape_length[keypoints_with_values]
             predicted_points_with_values = np.array([point for idx, point in enumerate(predicted_points) if point is not None])
             predicted_points_mean = predicted_points_with_values.mean(0)
             shape_points_mean = shape_points_with_matching_predictions.mean(0)
@@ -69,13 +80,21 @@ class ProcrustesProblemSolver():
             displacement = np.expand_dims(displacement, axis=0)
             displacements = np.repeat(displacement, shape_points_with_matching_predictions.shape[0], axis=0)
             centered_predictions = predicted_points_with_values - displacements
-            predictions_lenght = np.linalg.norm(centered_predictions, axis=1)
-            percentage_error_lenght = np.abs((predictions_lenght - shape_lenght_with_matching_predictions) / shape_lenght_with_matching_predictions)
-            keypoints_with_wrong_lenghts = percentage_error_lenght > lenght_perc_threshold
-            if keypoints_with_wrong_lenghts.sum() > 0:
-                print(percentage_error_lenght)
+            shape_distances = self.compute_point_distances(shape_points_with_matching_predictions)
+            perdictions_distances = self.compute_point_distances(centered_predictions)
+            mean_difference = np.abs(shape_distances - perdictions_distances).mean(0)
+            print('\tmean_difference:', mean_difference)
+
+            #predictions_length = np.linalg.norm(centered_predictions, axis=1)
+            #percentage_error_length = np.abs((predictions_length - shape_length_with_matching_predictions) / shape_length_with_matching_predictions)
+            #keypoints_with_wrong_lengths = percentage_error_length > length_perc_threshold
+            #print('\tPercentage_error_length', percentage_error_length)
+            #print('\tCentered_predictions', centered_predictions)
+            #print('\tSelf.shape_points', shape_points_with_matching_predictions)
+            keypoints_with_wrong_lengths = mean_difference > length_threshold
+            if keypoints_with_wrong_lengths.sum() > 0 or len(mean_difference) > 3:
                 # remove the point with largest error and try again
-                local_index_with_max_error = np.argmax(percentage_error_lenght)
+                local_index_with_max_error = np.argmax(mean_difference)
                 global_index_with_max_error = keypoints_with_values[local_index_with_max_error]
                 predicted_points[global_index_with_max_error] = None
                 return ProcrustesSolution(ProcrustesSolutionType.NEW_SET_OF_POINTS_FOUND, predicted_points)
@@ -88,11 +107,11 @@ class ProcrustesProblemSolver():
         else:
             return ProcrustesSolution(ProcrustesSolutionType.NO_SOLUTION_FOUND, predicted_points)
 
-    def solve(self, predicted_points, lenght_perc_threshold = 0.1):
+    def solve(self, predicted_points, length_threshold = 20.):
         solution = None
         current_solution_type = ProcrustesSolutionType.NEW_SET_OF_POINTS_FOUND
         while current_solution_type == ProcrustesSolutionType.NEW_SET_OF_POINTS_FOUND:
-            solution = self.solution_attempt(predicted_points, lenght_perc_threshold)
+            solution = self.solution_attempt(predicted_points, length_threshold)
             current_solution_type = solution.solution_type
         if current_solution_type == ProcrustesSolutionType.NO_SOLUTION_FOUND:
             return None
