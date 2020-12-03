@@ -61,6 +61,9 @@ class ProcrustesProblemSolver():
         point_distances = point_distances.reshape(point_distances.shape[0] * point_distances.shape[1], 3)
         point_distances = np.linalg.norm(point_distances, axis=1)
         point_distances = point_distances.reshape(points.shape[0], points.shape[0])
+        # Add identity to remove diagonal zeros and the distance matrix can be used
+        # for division without getting numerical problems
+        point_distances = point_distances + np.identity(points.shape[0])
         return point_distances
 
 
@@ -82,8 +85,8 @@ class ProcrustesProblemSolver():
             centered_predictions = predicted_points_with_values - displacements
             shape_distances = self.compute_point_distances(shape_points_with_matching_predictions)
             perdictions_distances = self.compute_point_distances(centered_predictions)
-            mean_difference = np.abs(shape_distances - perdictions_distances).mean(0)
-            print('\tmean_difference:', mean_difference)
+            mean_difference = (np.abs(shape_distances - perdictions_distances) / perdictions_distances).mean(0)
+            print('\tMean Difference:', mean_difference)
 
             #predictions_length = np.linalg.norm(centered_predictions, axis=1)
             #percentage_error_length = np.abs((predictions_length - shape_length_with_matching_predictions) / shape_length_with_matching_predictions)
@@ -107,7 +110,7 @@ class ProcrustesProblemSolver():
         else:
             return ProcrustesSolution(ProcrustesSolutionType.NO_SOLUTION_FOUND, predicted_points)
 
-    def solve(self, predicted_points, length_threshold = 20.):
+    def solve(self, predicted_points, length_threshold = 0.1):
         solution = None
         current_solution_type = ProcrustesSolutionType.NEW_SET_OF_POINTS_FOUND
         while current_solution_type == ProcrustesSolutionType.NEW_SET_OF_POINTS_FOUND:

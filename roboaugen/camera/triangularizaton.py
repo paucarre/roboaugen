@@ -3,7 +3,7 @@ from roboaugen.model.inference import Inferencer
 from roboaugen.camera.transformation_estimator import ProcrustesProblemSolver
 from robotcontroller.kinematics import RobotTopology, RobotState
 from robotcontroller.ik import IkSolver, RobotForwardKinematics
-
+from modern_robotics import *
 
 import numpy as np
 import cv2
@@ -178,7 +178,7 @@ class KeypointMatcher():
         return keypoint_to_matches
 
 
-    def draw_keypoint_matches(self, keypoint_to_matches, image_initial, image_final):
+    def draw_keypoint_matches(self, label, keypoint_to_matches, image_initial, image_final):
         hues = torch.arange(start=0,end=179., step = 179 / (self.config.num_vertices + 1) )
         colors = [Color(hsl=(hue/180, 1, 0.5)).rgb for hue in hues]
         colors = [(int(color[0] * 255), int(color[1] * 255), int(color[2] * 255)) for color in colors]
@@ -192,10 +192,10 @@ class KeypointMatcher():
                 image_final = cv2.circle(image_final, (int(match.coord_final[0]), int(match.coord_final[1])), 4, color, thickness=2)
 
 
-        cv2.imshow(f'Point in image 1', image_initial)
-        cv2.namedWindow(f'Point in image 1')
-        cv2.setMouseCallback(f'Point in image 1', print_coordinates)
-        cv2.imshow(f'Epipolar line in second image', image_final)
+        cv2.imshow(f'{label} | Point in image 1', image_initial)
+        cv2.namedWindow(f'{label} | Point in image 1')
+        cv2.setMouseCallback(f'{label} | Point in image 1', print_coordinates)
+        cv2.imshow(f'{label} | Epipolar line in second image', image_final)
 
 class EpipolarMatch():
 
@@ -252,9 +252,9 @@ def test():
 
     image_initial_path = '/home/rusalka/Pictures/Webcam/first.jpg'
     image_final_path = '/home/rusalka/Pictures/Webcam/second.jpg'
-    image_initial = config.get_image_from_path(image_initial_path)
-    image_final = config.get_image_from_path(image_final_path)
-    height, width = image_final.shape[0], image_final.shape[1]
+    image_initial_raw = config.get_image_from_path(image_initial_path)
+    image_final_raw = config.get_image_from_path(image_final_path)
+    height, width = image_final_raw.shape[0], image_final_raw.shape[1]
 
     camera_topology = RobotTopology(l1=142, l2=142, l3=60, h1=50, angle_wide_1=180, angle_wide_2=180 + 90, angle_wide_3=180 + 90)
 
@@ -296,8 +296,8 @@ def test():
 
 
 
-    image_initial = camera_model.undistort_image(image_initial)
-    image_final = camera_model.undistort_image(image_final)
+    image_initial = camera_model.undistort_image(image_initial_raw)
+    image_final = camera_model.undistort_image(image_final_raw)
     threshold = 0.1
     # perform inference
     inferencer = Inferencer(distort=False, keep_dimensions=True, use_cache=False, \
@@ -320,22 +320,40 @@ def test():
     keypoint_to_matches = keypoint_matcher.get_matches_from_predictions(predicted_heatmaps,\
         scale, prediction_threshold = 0.04, epipolar_threshold = 1.)
 
-    keypoint_matcher.draw_keypoint_matches(keypoint_to_matches, image_initial, image_final)
+    keypoint_matcher.draw_keypoint_matches('Initial', keypoint_to_matches, image_initial, image_final)
     triangularizer = Triangularizer(camera_model, camera_topology)
     points_predicted = triangularizer.triangularize(initial_state, final_state, keypoint_to_matches, triangularization_threshold=100.)
 
 
-    print('points_predicted: ', points_predicted)
+    #print('points_predicted: ', points_predicted)
     procrustes_problem_solver = ProcrustesProblemSolver()
-    solution = procrustes_problem_solver.solve(points_predicted, 20.)
+    solution = procrustes_problem_solver.solve(points_predicted)
     if solution is not None:
-        print('solution: ', solution)
-        print(solution.transformation)
+        #print('solution: ', solution)
+        #print(solution.transformation)
+        rotation = solution.transformation[0:3, 0:3]
+        y_vector = np.array([0, 1, 0])
+        y_vector_rotated = rotation @ y_vector
+        y_vector_projected_to_xy_plane = y_vector_rotated
+        y_vector_projected_to_xy_plane[2] = 0
+        y_vector_projected_to_xy_plane = y_vector_projected_to_xy_plane / np.linalg.norm(y_vector_projected_to_xy_plane)
+        angle = np.arccos(y_vector @ y_vector_projected_to_xy_plane.T)  * 180. / np.pi
+        print('angle: ', angle)
+        #print(y_vector, y_vector_projected_to_xy_plane, )
+        #rotation_axis, angle = AxisAng3(so3ToVec(MatrixLog3(rotation)))
+        #angle = angle * 180. / np.pi
+        #print('Rotation with angle and vector', angle, rotation_axis)
+        print('solution.points',  solution.points)
+        keypoint_to_matches = { keypoint: matches  if solution.points[keypoint] is not None else [] for keypoint, matches in keypoint_to_matches.items()}
+        image_initial = camera_model.undistort_image(image_initial_raw)
+        image_final = camera_model.undistort_image(image_final_raw)
+        keypoint_matcher.draw_keypoint_matches('From procrustes',  keypoint_to_matches, image_initial, image_final)
 
-    cv2.imshow(f'Point in image 1', image_initial)
-    cv2.namedWindow(f'Point in image 1')
-    cv2.setMouseCallback(f'Point in image 1', print_coordinates)
-    cv2.imshow(f'Epipolar line in second image', image_final)
+
+    #cv2.imshow(f'Point in image 1', image_initial)
+    #cv2.namedWindow(f'Point in image 1')
+    #cv2.setMouseCallback(f'Point in image 1', print_coordinates)
+    #cv2.imshow(f'Epipolar line in second image', image_final)
 
 
     predicted_heatmaps = predicted_heatmaps * (predicted_heatmaps > 0.05)

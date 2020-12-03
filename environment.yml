@@ -17,7 +17,12 @@ dependencies:
   - tqdm
   - tensorboard
   - nvidia-apex
+  - flask
+  - requests
+  - simplejson
   - pip
   - pip:
+    - flask-socketio==4.3.1
     - opencv-python==4.4.0.46
     - torch-optimizer
+    - modern_robotics==1.1.0
