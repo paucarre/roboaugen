@@ -328,7 +328,9 @@ def test():
     print('points_predicted: ', points_predicted)
     procrustes_problem_solver = ProcrustesProblemSolver()
     solution = procrustes_problem_solver.solve(points_predicted, 20.)
-    print('solution: ', solution)
+    if solution is not None:
+        print('solution: ', solution)
+        print(solution.transformation)
 
     cv2.imshow(f'Point in image 1', image_initial)
     cv2.namedWindow(f'Point in image 1')
