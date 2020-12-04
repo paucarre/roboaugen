@@ -39,16 +39,56 @@ class ProcrustesSolution():
 
 class ProcrustesProblemSolver():
 
+    '''
+        projected_visible_vertices": [
+            null,
+            null,
+            null,
+            null,
+            [
+                347.2223205566406,
+                291.09625244140625
+            ],
+            [
+                164.77813720703125,
+                291.09690856933594
+            ],
+            [
+                164.77769470214844,
+                165.66653442382812
+            ],
+            [
+                347.22186279296875,
+                165.6658935546875
+            ]
+    '''
+
+    '''
+
+    Cube
+         [2]__________[3]
+        /|            /|
+       / |           / |
+      /  |          /  |
+     /   |         /   |
+   [6]------------[7]  |
+    |    [1]_______|__[0]
+    |   /          |  /
+    |  /           | /
+    | /            |/
+   [5]------------[4]
+
+    '''
     def __init__(self):
         self.shape_points = np.array([ \
-                [-40.,  40.,   0.],
-                [-40., -40.,   0.],
-                [-40., -40.,  55.],
-                [-40.,  40.,  55.],
-                [ 40.,  40.,   0.],
-                [ 40., -40.,   0.],
-                [ 40., -40.,  55.],
-                [ 40.,  40.,  55.]])
+            [-40.,  40.,  0.],  # 0 - Back-Bottom-Right
+            [-40., -40.,  0.],  # 1 - Back-Bottom-Left
+            [-40., -40., 55.],  # 2 - Back-Top-Left
+            [-40.,  40., 55.],  # 3 - Back-Top-Right
+            [ 40.,  40.,  0.],  # 4 - Front-Bottom-Right
+            [ 40., -40.,  0.],  # 5 - Front-Bottom-Left
+            [ 40., -40., 55.],  # 6 - Front-Top-Left
+            [ 40.,  40., 55.]]) # 7 - Front-Top-Right
         center = self.shape_points.mean(0)
         self.shape_points = self.shape_points - center
         #self.shape_length = np.linalg.norm(self.shape_points, axis=1)
@@ -85,7 +125,8 @@ class ProcrustesProblemSolver():
             centered_predictions = predicted_points_with_values - displacements
             shape_distances = self.compute_point_distances(shape_points_with_matching_predictions)
             perdictions_distances = self.compute_point_distances(centered_predictions)
-            mean_difference = (np.abs(shape_distances - perdictions_distances) / perdictions_distances).mean(0)
+            difference = np.abs(shape_distances - perdictions_distances) / perdictions_distances
+            mean_difference = difference.mean(0)
             print('\tMean Difference:', mean_difference)
 
             #predictions_length = np.linalg.norm(centered_predictions, axis=1)
@@ -96,12 +137,28 @@ class ProcrustesProblemSolver():
             #print('\tSelf.shape_points', shape_points_with_matching_predictions)
             keypoints_with_wrong_lengths = mean_difference > length_threshold
             if keypoints_with_wrong_lengths.sum() > 0 or len(mean_difference) > 3:
+                # Try all the removals and see which one generates minimum global error
+                index_with_highest_error = None
+                highest_error = None
+                for point_index in range(len(mean_difference)):
+                    current_error = np.delete(np.delete(difference, \
+                        point_index, axis=0), point_index, axis=1).mean()
+                    point_index = keypoints_with_values[point_index]
+                    print(f'\t\tDistances at index {point_index}: {current_error:0.3}')
+                    if highest_error is None or highest_error < current_error:
+                        highest_error = current_error
+                        index_with_highest_error = point_index
                 # remove the point with largest error and try again
-                local_index_with_max_error = np.argmax(mean_difference)
-                global_index_with_max_error = keypoints_with_values[local_index_with_max_error]
-                predicted_points[global_index_with_max_error] = None
+                #global_index_with_max_error = keypoints_with_values[index_with_highest_error]
+                print('removing global index', point_index)
+                predicted_points[point_index] = None
                 return ProcrustesSolution(ProcrustesSolutionType.NEW_SET_OF_POINTS_FOUND, predicted_points)
             else:
+                print('\tComputing rotation matrix')
+                print('\t\tCentered Predictions')
+                print(centered_predictions)
+                print('\t\tShape points')
+                print(shape_points_with_matching_predictions)
                 u, _, vh = np.linalg.svd(centered_predictions @ shape_points_with_matching_predictions.T)
                 rotation = u @ vh
                 transformation = np.concatenate((rotation, displacement.T), axis=1)

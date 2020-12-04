@@ -160,19 +160,24 @@ class KeypointMatcher():
                 distances_initial_to_final_indices = (distances_initial_to_final < epipolar_threshold).nonzero()
                 matches = distances_initial_to_final_indices.size()[0]
                 if matches > 0:
+                    print('distances_initial_to_final_indices', distances_initial_to_final_indices)
                     print(f'\t{matches} matches found from original initial {distances_initial_to_final.size()[0]} points and {distances_initial_to_final.size()[1]} final points.')
-                    minimum_distances, minimum_initial_index_by_final = torch.min(distances_initial_to_final, dim=0)
-                    minimum_distance, minimum_final_index = torch.min(minimum_distances, dim=0)
-                    minimum_initial_index = minimum_initial_index_by_final[minimum_final_index]
-                    print(f'\tOptimal match of value {minimum_distance:0.3} from initial index {minimum_initial_index} and final index {minimum_final_index}')
-                    coordinates_initial = predictions_initial_image[indices_initial_keypoint[minimum_initial_index], 2:]
-                    print(f'\tCoordinate on initial image: {coordinates_initial}')
-                    coord_initial = (coordinates_initial[0], coordinates_initial[1])
-                    coordinates_final = predictions_final_image[indices_final_keypoint[minimum_final_index], 2:]
-                    print(f'\tCoordinate on final image: {coordinates_final}')
-                    coord_final = (coordinates_final[0], coordinates_final[1])
-                    epipolar_match = EpipolarMatch(coord_initial, coord_final, minimum_distance)
-                    keypoint_to_matches[keypoint_type].append(epipolar_match)
+                    for match_index in range(matches):
+                        initial_and_final_indices = distances_initial_to_final_indices[match_index]
+                        #minimum_distances, minimum_initial_index_by_final = torch.min(distances_initial_to_final, dim=0)
+                        #distance, final_index = torch.min(minimum_distances, dim=0)
+                        #minimum_initial_index = minimum_initial_index_by_final[minimum_final_index]
+                        #print(f'\tOptimal match of value {minimum_distance:0.3} from initial index {minimum_initial_index} and final index {minimum_final_index}')
+                        coordinates_initial = coordinates_initial_image[:2, [indices_initial_keypoint[initial_and_final_indices[0]]]]
+                        #print(coordinates_initial)
+                        #print(f'\tCoordinate on initial image: {coordinates_initial}')
+                        coord_initial = (coordinates_initial[0], coordinates_initial[1])
+                        coordinates_final = coordinates_final_image[:2, [indices_final_keypoint[initial_and_final_indices[1]]]]
+                        #print(f'\tCoordinate on final image: {coordinates_final}')
+                        coord_final = (coordinates_final[0], coordinates_final[1])
+                        distance = distances_initial_to_final[initial_and_final_indices[0], initial_and_final_indices[1]]
+                        epipolar_match = EpipolarMatch(coord_initial, coord_final, distance)
+                        keypoint_to_matches[keypoint_type].append(epipolar_match)
                 else:
                     print(f'\tNo matches found')
         return keypoint_to_matches
@@ -214,19 +219,20 @@ class Triangularizer():
         self.camera_matrix = camera_model.undistorted_camera_matrix @ camera_model.trans_robot_to_camera_rotation
         self.forward_kinematics = RobotForwardKinematics(camera_robot_topology)
 
-    def triangularize(self, initial_state, final_state, keypoint_to_matches, triangularization_threshold=100.):
+    def triangularize(self, initial_state, final_state, keypoint_to_matches, triangularization_threshold=40.):
 
         initial_transformation = self.forward_kinematics.get_transformation(initial_state)
         final_transformation = self.forward_kinematics.get_transformation(final_state)
         initial_projection_matrix = self.camera_matrix @ initial_transformation[:3,:]
         final_projection_matrix = self.camera_matrix @ final_transformation[:3,:]
-
         points_predicted = []
         for keypoint in range(self.config.num_vertices):
+            points_predicted_keypoint = []
             match_found = False
             if keypoint in keypoint_to_matches:
                 matches = keypoint_to_matches[keypoint]
                 for match in matches:
+                    print('match', match)
                     coord_initial = MathUtils.skew([match.coord_initial[0], match.coord_initial[1], 1])
                     coord_final = MathUtils.skew([match.coord_final[0], match.coord_final[1], 1])
                     vector_space_initial = coord_initial @ initial_projection_matrix
@@ -239,10 +245,22 @@ class Triangularizer():
                     triangularization_error = s[3]
                     if triangularization_error < triangularization_threshold:
                         #print(point, s[3])
-                        points_predicted.append(point[:3])
+                        point = point[:3]
+                        point_extended = np.append(point, np.array([1]), axis=0)
+                        initial_point = self.camera_matrix @ (initial_transformation @ point_extended)[:3]
+                        initial_point = initial_point / initial_point[2]
+                        # Final
+                        final_point = self.camera_matrix @ (final_transformation @ point_extended)[:3]
+                        final_point = final_point / final_point[2]
+                        mean_reprojection_error = ((initial_point[:2] - match.coord_initial) ** 2).mean() + \
+                            ((final_point[:2] - match.coord_final) ** 2).mean()
+                        print(point, s[3], mean_reprojection_error)
+
+                        points_predicted_keypoint.append(point)
                         match_found = True
-            if not match_found:
-                points_predicted.append(None)
+            points_predicted.append(points_predicted_keypoint)
+            #if not match_found:
+            #    points_predicted_keypoint.append(None)
 
         return points_predicted
 
@@ -300,6 +318,7 @@ def test():
     image_final = camera_model.undistort_image(image_final_raw)
     threshold = 0.1
     # perform inference
+
     inferencer = Inferencer(distort=False, keep_dimensions=True, use_cache=False, \
         mode='silco', max_background_objects=1, max_foreground_objects=1)
     supports_folder = 'test/images/'
@@ -316,14 +335,94 @@ def test():
     scale = original_width / targe_width
     print(f'Original h/w {original_height}, {original_width} => Target h/w {target_height}, {targe_width}. Scales: {original_width / targe_width} | {original_height / target_height}')
 
+
     keypoint_matcher = KeypointMatcher(epipolar_line_generator)
     keypoint_to_matches = keypoint_matcher.get_matches_from_predictions(predicted_heatmaps,\
         scale, prediction_threshold = 0.04, epipolar_threshold = 1.)
-
+    print(keypoint_to_matches)
     keypoint_matcher.draw_keypoint_matches('Initial', keypoint_to_matches, image_initial, image_final)
-    triangularizer = Triangularizer(camera_model, camera_topology)
-    points_predicted = triangularizer.triangularize(initial_state, final_state, keypoint_to_matches, triangularization_threshold=100.)
 
+
+    '''
+    keypoint_to_matches = {0: [], 1: [], \
+        2: [EpipolarMatch((torch.tensor(270), torch.tensor(350)), (torch.tensor(320), torch.tensor(335)), torch.tensor(0.0434, dtype=torch.float64))],
+        3: [],
+        4: [EpipolarMatch((torch.tensor(375), torch.tensor(435)), (torch.tensor(410), torch.tensor(430)), torch.tensor(0.0203, dtype=torch.float64))],
+        5: [EpipolarMatch((torch.tensor(285), torch.tensor(440)), (torch.tensor(410), torch.tensor(430)), torch.tensor(0.0739, dtype=torch.float64))],
+        6: [EpipolarMatch((torch.tensor(285), torch.tensor(380)), (torch.tensor(315), torch.tensor(360)), torch.tensor(0.1840, dtype=torch.float64))],
+        7: [EpipolarMatch((torch.tensor(370), torch.tensor(370)), (torch.tensor(410), torch.tensor(365)), torch.tensor(0.5986, dtype=torch.float64))]
+        }
+    '''
+    '''
+    triangularizer = Triangularizer(camera_model, camera_topology)
+    points_predicted = triangularizer.triangularize(initial_state, final_state, keypoint_to_matches)
+    stats = {}
+    topology = {
+        'front': {
+            'indices': set([4,5,6,7]),
+            'f': lambda x: x[0]
+        },
+        'back': {
+            'indices': set([0,1,2,3]),
+            'f': lambda x: x[0]
+        },
+        'up': {
+            'indices': set([0,1,4,5]),
+            'f': lambda x: x[2]
+        },
+        'down': {
+            'indices': set([2,3,6,7]),
+            'f': lambda x: x[2]
+        },
+        'left': {
+            'indices': set([1,2,5,6]),
+            'f': lambda x: x[1]
+        },
+        'right': {
+            'indices': set([0,3,4,7]),
+            'f': lambda x: x[1]
+        }
+    }
+
+    image_initial = camera_model.undistort_image(image_initial_raw)
+    image_final = camera_model.undistort_image(image_final_raw)
+
+
+    config = Config()
+    camera_matrix = camera_model.undistorted_camera_matrix @ camera_model.trans_robot_to_camera_rotation
+    forward_kinematics = RobotForwardKinematics(camera_topology)
+    initial_transformation = forward_kinematics.get_transformation(initial_state)
+    final_transformation = forward_kinematics.get_transformation(final_state)
+
+    hues = torch.arange(start=0,end=179., step = 179 / (config.num_vertices + 1) )
+    colors = [Color(hsl=(hue / 180, 1, 0.5)).rgb for hue in hues]
+    colors = [(int(color[0] * 255), int(color[1] * 255), int(color[2] * 255)) for color in colors]
+    print('points_predicted', len(points_predicted))
+    for idx, points_in_keypoint in enumerate(points_predicted):
+        color = colors[idx]
+        for point_predicted in points_in_keypoint:
+            point_predicted = np.append(point_predicted, np.array([1]), axis=0)
+            # Initial
+            initial_point = camera_matrix @ (initial_transformation @ point_predicted)[:3]
+            initial_point = initial_point / initial_point[2]
+            image_initial = cv2.circle(image_initial, (int(initial_point[0]), int(initial_point[1])), 4, color, thickness=2)
+            # Final
+            final_point = camera_matrix @ (final_transformation @ point_predicted)[:3]
+            final_point = final_point / final_point[2]
+            print((int(final_point[0]), int(final_point[1])))
+            image_final = cv2.circle(image_final, (int(final_point[0]), int(final_point[1])), 4, color, thickness=2)
+
+    cv2.imshow(f'Reprojected | Point in Initial Image', image_initial)
+    cv2.imshow(f'Reprojected | Point in Final Image', image_final)
+
+    for idx, point_predicted in enumerate(points_predicted):
+        if point_predicted is not None:
+            for side in topology:
+                if idx in topology[side]['indices']:
+                    if side not in stats:
+                        stats[side] = []
+                    stats[side].append( ( topology[side]['f'](point_predicted), idx) )
+    print(stats)
 
     #print('points_predicted: ', points_predicted)
     procrustes_problem_solver = ProcrustesProblemSolver()
@@ -332,13 +431,31 @@ def test():
         #print('solution: ', solution)
         #print(solution.transformation)
         rotation = solution.transformation[0:3, 0:3]
+
+        z_vector = np.array([0, 0, 1])
+        z_vector_rotated = rotation @ z_vector
+        z_vector_rotated = z_vector_rotated
+        z_vector_rotated[0] = 0
+        z_vector_rotated = z_vector_rotated / np.linalg.norm(z_vector_rotated)
+        angle_x = np.arccos(z_vector @ z_vector_rotated.T)  * 180. / np.pi
+        print('Angle rotation in X: ', angle_x)
+
+        x_vector = np.array([1, 0, 0])
+        x_vector_rotated = rotation @ x_vector
+        x_vector_rotated = x_vector_rotated
+        x_vector_rotated[1] = 0
+        x_vector_rotated = x_vector_rotated / np.linalg.norm(x_vector_rotated)
+        angle_y = np.arccos(x_vector @ x_vector_rotated.T)  * 180. / np.pi
+        print('Angle rotation in Y: ', angle_y)
+
         y_vector = np.array([0, 1, 0])
         y_vector_rotated = rotation @ y_vector
-        y_vector_projected_to_xy_plane = y_vector_rotated
-        y_vector_projected_to_xy_plane[2] = 0
-        y_vector_projected_to_xy_plane = y_vector_projected_to_xy_plane / np.linalg.norm(y_vector_projected_to_xy_plane)
-        angle = np.arccos(y_vector @ y_vector_projected_to_xy_plane.T)  * 180. / np.pi
-        print('angle: ', angle)
+        y_vector_rotated = y_vector_rotated
+        y_vector_rotated[2] = 0
+        y_vector_rotated = y_vector_rotated / np.linalg.norm(y_vector_rotated)
+        angle_z = np.arccos(y_vector @ y_vector_rotated.T)  * 180. / np.pi
+        print('Angle rotation in Z: ', angle_z)
+
         #print(y_vector, y_vector_projected_to_xy_plane, )
         #rotation_axis, angle = AxisAng3(so3ToVec(MatrixLog3(rotation)))
         #angle = angle * 180. / np.pi
@@ -356,11 +473,11 @@ def test():
     #cv2.imshow(f'Epipolar line in second image', image_final)
 
 
-    predicted_heatmaps = predicted_heatmaps * (predicted_heatmaps > 0.05)
-    for idx, image in enumerate(images):
-        inferencer.display_results(f'Inference {idx}', visualize_query[idx: idx + 1], None, predicted_heatmaps[idx: idx + 1], threshold=0.0)
+    #predicted_heatmaps = predicted_heatmaps * (predicted_heatmaps > 0.05)
+    #for idx, image in enumerate(images):
+    #    inferencer.display_results(f'Inference {idx}', visualize_query[idx: idx + 1], None, predicted_heatmaps[idx: idx + 1], threshold=0.0)
 
-
+    '''
     cv2.waitKey(0)
 
 if __name__ == '__main__':
