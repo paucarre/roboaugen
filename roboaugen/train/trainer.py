@@ -46,8 +46,8 @@ class Trainer():
     return classifiers_entropy
 
   def mse(self, target_heatmaps, predicted_heatmaps, spatial_penalty):
-    heatmap_target = ((target_heatmaps - predicted_heatmaps) ** 2)  #* (1.0 - spatial_penalty)
-    return (heatmap_target.data * heatmap_target).mean()
+    heatmap_target = ((target_heatmaps - predicted_heatmaps) ** 2)# * (1.0 - spatial_penalty)
+    return ( (heatmap_target.data + 1.0) * heatmap_target).mean()
 
   def save_train_state(self, epoch, current_iteration, optimizer_higher_resolution, optimizer_silco):
     torch.save({
@@ -77,8 +77,9 @@ class Trainer():
     #self.logger.info(f'Epoch {epoch + 1}/{epochs} | Batch {batch_index + 1}/{batches}')
     self.roboaugen_writer.add_scalar('Training Loss', losses['total_loss'], current_iteration )
     self.roboaugen_writer.add_scalar('MSE Loss', losses['mse_loss'], current_iteration )
-    self.roboaugen_writer.add_scalar('Spatial Entropy Loss', losses['spatial_location_entropy_loss'], current_iteration )
-    self.roboaugen_writer.add_scalar('Feature Entropy Loss', losses['feature_entropy_loss'], current_iteration )
+    self.roboaugen_writer.add_scalar('Entropy Loss', losses['entropy_loss'], current_iteration )
+    #self.roboaugen_writer.add_scalar('Spatial Entropy Loss', losses['spatial_location_entropy_loss'], current_iteration )
+    #self.roboaugen_writer.add_scalar('Feature Entropy Loss', losses['feature_entropy_loss'], current_iteration )
 
   def save_models(self):
     self.config.save_mobilenet_model(self.backbone)
@@ -129,13 +130,14 @@ class Trainer():
         if mode == 'silco' or mode == 'both':
           query_features, spatial_classifiers, feature_classifiers, _ = self.silco(query_features, support_features)
 
-        losses['feature_entropy_loss'] = 0.#Trainer.compute_classifiers_entropy(feature_classifiers) * 1e-12
-        losses['spatial_location_entropy_loss'] = 0.#Trainer.compute_classifiers_entropy(spatial_classifiers) * 1e-12
+        #losses['feature_entropy_loss'] = 0.#Trainer.compute_classifiers_entropy(feature_classifiers) * 1e-12
+        #losses['spatial_location_entropy_loss'] = Trainer.compute_classifiers_entropy(spatial_classifiers) * 1e-12
         predicted_heatmaps = self.higher_resolution(query_features) #updated_query_features)
         target_heatmaps = F.interpolate(target_heatmaps, size=(self.config.input_width // 2, self.config.input_height // 2), mode='bilinear').cuda(non_blocking=True)
         spatial_penalty = F.interpolate(spatial_penalty, size=(self.config.input_width // 2, self.config.input_height // 2), mode='bilinear').cuda(non_blocking=True)
         losses['mse_loss'] = self.mse(target_heatmaps, predicted_heatmaps, spatial_penalty)
-        losses['total_loss'] = losses['mse_loss'] + losses['spatial_location_entropy_loss'] + losses['feature_entropy_loss']
+        losses['entropy_loss'] = Trainer.entropy(predicted_heatmaps) * 1e-3
+        losses['total_loss'] = losses['mse_loss'] + losses['entropy_loss']#+ losses['spatial_location_entropy_loss'] + losses['feature_entropy_loss']
         if mode == 'silco' or mode == 'both':
           optimizer_silco.zero_grad()
         if mode == 'keypoints' or mode == 'both':

@@ -160,7 +160,7 @@ class KeypointMatcher():
                 distances_initial_to_final_indices = (distances_initial_to_final < epipolar_threshold).nonzero()
                 matches = distances_initial_to_final_indices.size()[0]
                 if matches > 0:
-                    print('distances_initial_to_final_indices', distances_initial_to_final_indices)
+                    #print('distances_initial_to_final_indices', distances_initial_to_final_indices)
                     print(f'\t{matches} matches found from original initial {distances_initial_to_final.size()[0]} points and {distances_initial_to_final.size()[1]} final points.')
                     for match_index in range(matches):
                         initial_and_final_indices = distances_initial_to_final_indices[match_index]
@@ -219,7 +219,7 @@ class Triangularizer():
         self.camera_matrix = camera_model.undistorted_camera_matrix @ camera_model.trans_robot_to_camera_rotation
         self.forward_kinematics = RobotForwardKinematics(camera_robot_topology)
 
-    def triangularize(self, initial_state, final_state, keypoint_to_matches, triangularization_threshold=40.):
+    def triangularize(self, initial_state, final_state, keypoint_to_matches, triangularization_threshold=100.):
 
         initial_transformation = self.forward_kinematics.get_transformation(initial_state)
         final_transformation = self.forward_kinematics.get_transformation(final_state)
@@ -232,7 +232,6 @@ class Triangularizer():
             if keypoint in keypoint_to_matches:
                 matches = keypoint_to_matches[keypoint]
                 for match in matches:
-                    print('match', match)
                     coord_initial = MathUtils.skew([match.coord_initial[0], match.coord_initial[1], 1])
                     coord_final = MathUtils.skew([match.coord_final[0], match.coord_final[1], 1])
                     vector_space_initial = coord_initial @ initial_projection_matrix
@@ -243,21 +242,24 @@ class Triangularizer():
                     point = nullspace / nullspace[3]
 
                     triangularization_error = s[3]
-                    if triangularization_error < triangularization_threshold:
-                        #print(point, s[3])
-                        point = point[:3]
-                        point_extended = np.append(point, np.array([1]), axis=0)
-                        initial_point = self.camera_matrix @ (initial_transformation @ point_extended)[:3]
-                        initial_point = initial_point / initial_point[2]
-                        # Final
-                        final_point = self.camera_matrix @ (final_transformation @ point_extended)[:3]
-                        final_point = final_point / final_point[2]
-                        mean_reprojection_error = ((initial_point[:2] - match.coord_initial) ** 2).mean() + \
-                            ((final_point[:2] - match.coord_final) ** 2).mean()
-                        print(point, s[3], mean_reprojection_error)
 
+                    #print(point, s[3])
+                    point = point[:3]
+                    point_extended = np.append(point, np.array([1]), axis=0)
+                    initial_point = self.camera_matrix @ (initial_transformation @ point_extended)[:3]
+                    initial_point = initial_point / initial_point[2]
+                    # Final
+                    final_point = self.camera_matrix @ (final_transformation @ point_extended)[:3]
+                    final_point = final_point / final_point[2]
+                    mean_reprojection_error = ( ((initial_point[:2] - match.coord_initial) ** 2).mean() + \
+                        ((final_point[:2] - match.coord_final) ** 2).mean() ) / 2.
+
+                    if mean_reprojection_error < triangularization_threshold:
+                        print('IN', keypoint, point, s[3], mean_reprojection_error)
                         points_predicted_keypoint.append(point)
                         match_found = True
+                    else:
+                        print('OUT', keypoint, point, s[3], mean_reprojection_error)
             points_predicted.append(points_predicted_keypoint)
             #if not match_found:
             #    points_predicted_keypoint.append(None)
@@ -338,8 +340,11 @@ def test():
 
     keypoint_matcher = KeypointMatcher(epipolar_line_generator)
     keypoint_to_matches = keypoint_matcher.get_matches_from_predictions(predicted_heatmaps,\
-        scale, prediction_threshold = 0.04, epipolar_threshold = 1.)
-    print(keypoint_to_matches)
+        scale, prediction_threshold = 0.001, epipolar_threshold = 1.)
+    #print('keypoint_to_matches')
+    #print(keypoint_to_matches)
+    for keypoint in keypoint_to_matches:
+        print(f'{keypoint} has the following amount of matches {len(keypoint_to_matches[keypoint])}')
     keypoint_matcher.draw_keypoint_matches('Initial', keypoint_to_matches, image_initial, image_final)
 
 
@@ -354,8 +359,6 @@ def test():
         }
     '''
     '''
-    triangularizer = Triangularizer(camera_model, camera_topology)
-    points_predicted = triangularizer.triangularize(initial_state, final_state, keypoint_to_matches)
     stats = {}
     topology = {
         'front': {
@@ -384,9 +387,22 @@ def test():
         }
     }
 
+    for idx, point_predicted in enumerate(points_predicted):
+        if point_predicted is not None:
+            for side in topology:
+                if idx in topology[side]['indices']:
+                    if side not in stats:
+                        stats[side] = []
+                    stats[side].append( ( topology[side]['f'](point_predicted), idx) )
+    print(stats)
+
+    '''
+
+    triangularizer = Triangularizer(camera_model, camera_topology)
+    points_predicted = triangularizer.triangularize(initial_state, final_state, keypoint_to_matches)
+
     image_initial = camera_model.undistort_image(image_initial_raw)
     image_final = camera_model.undistort_image(image_final_raw)
-
 
     config = Config()
     camera_matrix = camera_model.undistorted_camera_matrix @ camera_model.trans_robot_to_camera_rotation
@@ -397,7 +413,7 @@ def test():
     hues = torch.arange(start=0,end=179., step = 179 / (config.num_vertices + 1) )
     colors = [Color(hsl=(hue / 180, 1, 0.5)).rgb for hue in hues]
     colors = [(int(color[0] * 255), int(color[1] * 255), int(color[2] * 255)) for color in colors]
-    print('points_predicted', len(points_predicted))
+    #print('points_predicted', len(points_predicted))
     for idx, points_in_keypoint in enumerate(points_predicted):
         color = colors[idx]
         for point_predicted in points_in_keypoint:
@@ -409,21 +425,12 @@ def test():
             # Final
             final_point = camera_matrix @ (final_transformation @ point_predicted)[:3]
             final_point = final_point / final_point[2]
-            print((int(final_point[0]), int(final_point[1])))
+            #print((int(final_point[0]), int(final_point[1])))
             image_final = cv2.circle(image_final, (int(final_point[0]), int(final_point[1])), 4, color, thickness=2)
 
     cv2.imshow(f'Reprojected | Point in Initial Image', image_initial)
     cv2.imshow(f'Reprojected | Point in Final Image', image_final)
-
-    for idx, point_predicted in enumerate(points_predicted):
-        if point_predicted is not None:
-            for side in topology:
-                if idx in topology[side]['indices']:
-                    if side not in stats:
-                        stats[side] = []
-                    stats[side].append( ( topology[side]['f'](point_predicted), idx) )
-    print(stats)
-
+    '''
     #print('points_predicted: ', points_predicted)
     procrustes_problem_solver = ProcrustesProblemSolver()
     solution = procrustes_problem_solver.solve(points_predicted)
