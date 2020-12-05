@@ -160,20 +160,12 @@ class KeypointMatcher():
                 distances_initial_to_final_indices = (distances_initial_to_final < epipolar_threshold).nonzero()
                 matches = distances_initial_to_final_indices.size()[0]
                 if matches > 0:
-                    #print('distances_initial_to_final_indices', distances_initial_to_final_indices)
                     print(f'\t{matches} matches found from original initial {distances_initial_to_final.size()[0]} points and {distances_initial_to_final.size()[1]} final points.')
                     for match_index in range(matches):
                         initial_and_final_indices = distances_initial_to_final_indices[match_index]
-                        #minimum_distances, minimum_initial_index_by_final = torch.min(distances_initial_to_final, dim=0)
-                        #distance, final_index = torch.min(minimum_distances, dim=0)
-                        #minimum_initial_index = minimum_initial_index_by_final[minimum_final_index]
-                        #print(f'\tOptimal match of value {minimum_distance:0.3} from initial index {minimum_initial_index} and final index {minimum_final_index}')
                         coordinates_initial = coordinates_initial_image[:2, [indices_initial_keypoint[initial_and_final_indices[0]]]]
-                        #print(coordinates_initial)
-                        #print(f'\tCoordinate on initial image: {coordinates_initial}')
                         coord_initial = (coordinates_initial[0], coordinates_initial[1])
                         coordinates_final = coordinates_final_image[:2, [indices_final_keypoint[initial_and_final_indices[1]]]]
-                        #print(f'\tCoordinate on final image: {coordinates_final}')
                         coord_final = (coordinates_final[0], coordinates_final[1])
                         distance = distances_initial_to_final[initial_and_final_indices[0], initial_and_final_indices[1]]
                         epipolar_match = EpipolarMatch(coord_initial, coord_final, distance)
@@ -216,6 +208,7 @@ class Triangularizer():
 
     def __init__(self, camera_model, camera_robot_topology):
         self.config = Config()
+        self.camera_model = camera_model
         self.camera_matrix = camera_model.undistorted_camera_matrix @ camera_model.trans_robot_to_camera_rotation
         self.forward_kinematics = RobotForwardKinematics(camera_robot_topology)
 
@@ -265,6 +258,34 @@ class Triangularizer():
             #    points_predicted_keypoint.append(None)
 
         return points_predicted
+
+    def visualize_reprojection(self, points_predicted, image_initial_raw, image_final_raw, initial_state, final_state):
+        image_initial = self.camera_model.undistort_image(image_initial_raw)
+        image_final = self.camera_model.undistort_image(image_final_raw)
+
+        initial_transformation = self.forward_kinematics.get_transformation(initial_state)
+        final_transformation = self.forward_kinematics.get_transformation(final_state)
+
+        hues = torch.arange(start=0,end=179., step = 179 / (self.config.num_vertices + 1) )
+        colors = [Color(hsl=(hue / 180, 1, 0.5)).rgb for hue in hues]
+        colors = [(int(color[0] * 255), int(color[1] * 255), int(color[2] * 255)) for color in colors]
+        #print('points_predicted', len(points_predicted))
+        for idx, points_in_keypoint in enumerate(points_predicted):
+            color = colors[idx]
+            for point_predicted in points_in_keypoint:
+                point_predicted = np.append(point_predicted, np.array([1]), axis=0)
+                # Initial
+                initial_point = self.camera_matrix @ (initial_transformation @ point_predicted)[:3]
+                initial_point = initial_point / initial_point[2]
+                image_initial = cv2.circle(image_initial, (int(initial_point[0]), int(initial_point[1])), 4, color, thickness=2)
+                # Final
+                final_point = self.camera_matrix @ (final_transformation @ point_predicted)[:3]
+                final_point = final_point / final_point[2]
+                #print((int(final_point[0]), int(final_point[1])))
+                image_final = cv2.circle(image_final, (int(final_point[0]), int(final_point[1])), 4, color, thickness=2)
+
+        cv2.imshow(f'Reprojected | Point in Initial Image', image_initial)
+        cv2.imshow(f'Reprojected | Point in Final Image', image_final)
 
 
 def test():
@@ -340,7 +361,7 @@ def test():
 
     keypoint_matcher = KeypointMatcher(epipolar_line_generator)
     keypoint_to_matches = keypoint_matcher.get_matches_from_predictions(predicted_heatmaps,\
-        scale, prediction_threshold = 0.001, epipolar_threshold = 1.)
+        scale, prediction_threshold = 0.1, epipolar_threshold = 1.)
     #print('keypoint_to_matches')
     #print(keypoint_to_matches)
     for keypoint in keypoint_to_matches:
@@ -400,36 +421,7 @@ def test():
 
     triangularizer = Triangularizer(camera_model, camera_topology)
     points_predicted = triangularizer.triangularize(initial_state, final_state, keypoint_to_matches)
-
-    image_initial = camera_model.undistort_image(image_initial_raw)
-    image_final = camera_model.undistort_image(image_final_raw)
-
-    config = Config()
-    camera_matrix = camera_model.undistorted_camera_matrix @ camera_model.trans_robot_to_camera_rotation
-    forward_kinematics = RobotForwardKinematics(camera_topology)
-    initial_transformation = forward_kinematics.get_transformation(initial_state)
-    final_transformation = forward_kinematics.get_transformation(final_state)
-
-    hues = torch.arange(start=0,end=179., step = 179 / (config.num_vertices + 1) )
-    colors = [Color(hsl=(hue / 180, 1, 0.5)).rgb for hue in hues]
-    colors = [(int(color[0] * 255), int(color[1] * 255), int(color[2] * 255)) for color in colors]
-    #print('points_predicted', len(points_predicted))
-    for idx, points_in_keypoint in enumerate(points_predicted):
-        color = colors[idx]
-        for point_predicted in points_in_keypoint:
-            point_predicted = np.append(point_predicted, np.array([1]), axis=0)
-            # Initial
-            initial_point = camera_matrix @ (initial_transformation @ point_predicted)[:3]
-            initial_point = initial_point / initial_point[2]
-            image_initial = cv2.circle(image_initial, (int(initial_point[0]), int(initial_point[1])), 4, color, thickness=2)
-            # Final
-            final_point = camera_matrix @ (final_transformation @ point_predicted)[:3]
-            final_point = final_point / final_point[2]
-            #print((int(final_point[0]), int(final_point[1])))
-            image_final = cv2.circle(image_final, (int(final_point[0]), int(final_point[1])), 4, color, thickness=2)
-
-    cv2.imshow(f'Reprojected | Point in Initial Image', image_initial)
-    cv2.imshow(f'Reprojected | Point in Final Image', image_final)
+    triangularizer.visualize_reprojection(points_predicted, image_initial_raw, image_final_raw, initial_state, final_state)
     '''
     #print('points_predicted: ', points_predicted)
     procrustes_problem_solver = ProcrustesProblemSolver()
