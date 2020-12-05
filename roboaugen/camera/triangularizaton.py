@@ -132,8 +132,8 @@ class KeypointMatcher():
         return probability
 
     def scaled_points(self, coordinates_image, scale):
-        y = ( (coordinates_image[0, :] - 1) * scale ).double() + (scale / 2.)
-        x = ( (coordinates_image[1, :] - 1) * scale ).double() + (scale / 2.)
+        y = ( (coordinates_image[0, :] ) * scale ).double() + (scale / 2.)
+        x = ( (coordinates_image[1, :] ) * scale ).double() + (scale / 2.)
         ones = coordinates_image[2, :]
         scaled_coordinates_image = torch.cat([x.unsqueeze(0), y.unsqueeze(0), ones.unsqueeze(0)], 0)
         return scaled_coordinates_image
@@ -172,10 +172,10 @@ class KeypointMatcher():
                     for match_index in range(matches):
                         initial_and_final_indices = distances_initial_to_final_indices[match_index]
                         coordinates_initial = scaled_initial_coordinates[:2, [indices_initial_keypoint[initial_and_final_indices[0]]]]
-                        coord_initial = (coordinates_initial[0], coordinates_initial[1])
+                        coord_initial = torch.cat([coordinates_initial[0], coordinates_initial[1]], 0).numpy()
                         coordinates_final = scaled_final_coordinates[:2, [indices_final_keypoint[initial_and_final_indices[1]]]]
-                        coord_final = (coordinates_final[0], coordinates_final[1])
-                        distance = distances_initial_to_final[initial_and_final_indices[0], initial_and_final_indices[1]]
+                        coord_final = torch.cat([coordinates_final[0], coordinates_final[1]], 0).numpy()
+                        distance = distances_initial_to_final[initial_and_final_indices[0], initial_and_final_indices[1]].item()
 
                         probability_initial  = self.get_probability(predictions_initial_image[indices_initial_keypoint[initial_and_final_indices[0]]],
                             predicted_heatmaps, scale)
@@ -188,6 +188,54 @@ class KeypointMatcher():
                 else:
                     print(f'\tNo matches found')
         return keypoint_to_matches
+
+    def aggregate_groups(self, keypoint_to_matches_grouped):
+        keypoint_to_matches_grouped_aggregated = []
+        for groups_in_keypoint in keypoint_to_matches_grouped:
+            print(f'Keypoint {groups_in_keypoint}')
+            groupped_matches = []
+            for group in groups_in_keypoint:
+                if(len(group) > 0):
+                    total_probaility_initial = sum([match.probability_initial for match in group])
+                    #print('total_probaility_initial', total_probaility_initial)
+                    total_probaility_final = sum([match.probability_final for match in group])
+                    coord_initial = sum([(match.coord_initial * match.probability_initial) / total_probaility_initial for match in group])
+                    coord_final = sum([(match.coord_final * match.probability_final) / total_probaility_final for match in group])
+                    grouped_match = EpipolarMatch(\
+                                coord_initial,
+                                coord_final,
+                                0., # we don't care, fill it later
+                                total_probaility_initial,
+                                total_probaility_initial)
+                    groupped_matches.append(grouped_match)
+            keypoint_to_matches_grouped_aggregated.append(groupped_matches)
+        keypoint_to_matches_grouped_aggregated  = {keypoint: matches for keypoint, matches in enumerate(keypoint_to_matches_grouped_aggregated)}
+        return keypoint_to_matches_grouped_aggregated
+
+    def group_matches(self, keypoint_to_matches, grouping_distance_threshold = 100.):
+        keypoint_to_matches_grouped = []
+        for keypoint in keypoint_to_matches:
+            matches_grouped = []
+            matches = keypoint_to_matches[keypoint]
+            if len(matches) > 1:
+                grouped_match = matches[0]
+                current_group = [grouped_match]
+                for match_idx in range(1, len(matches)):
+                    current_match = matches[match_idx]
+                    distance = ( ( (grouped_match.coord_initial - current_match.coord_initial) ** 2 ).sum() + \
+                        ( (grouped_match.coord_final - current_match.coord_final) ** 2 ).sum() ) / 2.
+                    if distance < grouping_distance_threshold:
+                        current_group.append(current_match)
+                    else:
+                        matches_grouped.append(current_group)
+                        grouped_match = current_match
+                        current_group = [grouped_match]
+                matches_grouped.append(current_group)
+            else:
+                matches_grouped = [matches]
+            keypoint_to_matches_grouped.append(matches_grouped)
+
+        return self.aggregate_groups(keypoint_to_matches_grouped)
 
 
     def draw_keypoint_matches(self, label, keypoint_to_matches, image_initial, image_final):
@@ -211,10 +259,10 @@ class KeypointMatcher():
 
 class EpipolarMatch():
 
-    def __init__(self, coord_initial, coord_final, minimum_distance, probability_initial, probability_final):
+    def __init__(self, coord_initial, coord_final, distance, probability_initial, probability_final):
         self.coord_initial = coord_initial
         self.coord_final = coord_final
-        self.minimum_distance = minimum_distance
+        self.distance = distance
         self.probability_initial = probability_initial
         self.probability_final = probability_final
 
@@ -261,6 +309,7 @@ class Triangularizer():
                     # Final
                     final_point = self.camera_matrix @ (final_transformation @ point_extended)[:3]
                     final_point = final_point / final_point[2]
+                    print(initial_point, match.coord_initial)
                     mean_reprojection_error = ( ((initial_point[:2] - match.coord_initial) ** 2).mean() + \
                         ((final_point[:2] - match.coord_final) ** 2).mean() ) / 2.
 
@@ -379,66 +428,34 @@ def test():
     keypoint_matcher = KeypointMatcher(epipolar_line_generator)
     keypoint_to_matches = keypoint_matcher.get_matches_from_predictions(predicted_heatmaps,\
         scale, prediction_threshold = 0.1, epipolar_threshold = 1.)
-    #print('keypoint_to_matches')
-    #print(keypoint_to_matches)
+
     for keypoint in keypoint_to_matches:
         print(f'{keypoint} has the following amount of matches {len(keypoint_to_matches[keypoint])}')
     keypoint_matcher.draw_keypoint_matches('Initial', keypoint_to_matches, image_initial, image_final)
 
+    keypoint_to_matches_grouped_aggregated = keypoint_matcher.group_matches(keypoint_to_matches)
+    print(keypoint_to_matches_grouped_aggregated)
+
+    image_initial = camera_model.undistort_image(image_initial_raw)
+    image_final = camera_model.undistort_image(image_final_raw)
+    for keypoint in keypoint_to_matches_grouped_aggregated:
+        print(f'{keypoint} has the following grouped amount of matches {len(keypoint_to_matches_grouped_aggregated[keypoint])}')
+    keypoint_matcher.draw_keypoint_matches('Initial Grouped', keypoint_to_matches_grouped_aggregated, image_initial, image_final)
+
 
     '''
-    keypoint_to_matches = {0: [], 1: [], \
-        2: [EpipolarMatch((torch.tensor(270), torch.tensor(350)), (torch.tensor(320), torch.tensor(335)), torch.tensor(0.0434, dtype=torch.float64))],
-        3: [],
-        4: [EpipolarMatch((torch.tensor(375), torch.tensor(435)), (torch.tensor(410), torch.tensor(430)), torch.tensor(0.0203, dtype=torch.float64))],
-        5: [EpipolarMatch((torch.tensor(285), torch.tensor(440)), (torch.tensor(410), torch.tensor(430)), torch.tensor(0.0739, dtype=torch.float64))],
-        6: [EpipolarMatch((torch.tensor(285), torch.tensor(380)), (torch.tensor(315), torch.tensor(360)), torch.tensor(0.1840, dtype=torch.float64))],
-        7: [EpipolarMatch((torch.tensor(370), torch.tensor(370)), (torch.tensor(410), torch.tensor(365)), torch.tensor(0.5986, dtype=torch.float64))]
-        }
+    image_initial = camera_model.undistort_image(image_initial_raw)
+    image_final = camera_model.undistort_image(image_final_raw)
+    for keypoint in keypoint_to_matches:
+        print(f'{keypoint} has the following amount of matches {len(keypoint_to_matches[keypoint])}')
+    keypoint_matcher.draw_keypoint_matches('Initial', keypoint_to_matches, image_initial, image_final)
     '''
-    '''
-    stats = {}
-    topology = {
-        'front': {
-            'indices': set([4,5,6,7]),
-            'f': lambda x: x[0]
-        },
-        'back': {
-            'indices': set([0,1,2,3]),
-            'f': lambda x: x[0]
-        },
-        'up': {
-            'indices': set([0,1,4,5]),
-            'f': lambda x: x[2]
-        },
-        'down': {
-            'indices': set([2,3,6,7]),
-            'f': lambda x: x[2]
-        },
-        'left': {
-            'indices': set([1,2,5,6]),
-            'f': lambda x: x[1]
-        },
-        'right': {
-            'indices': set([0,3,4,7]),
-            'f': lambda x: x[1]
-        }
-    }
 
-    for idx, point_predicted in enumerate(points_predicted):
-        if point_predicted is not None:
-            for side in topology:
-                if idx in topology[side]['indices']:
-                    if side not in stats:
-                        stats[side] = []
-                    stats[side].append( ( topology[side]['f'](point_predicted), idx) )
-    print(stats)
-
-    '''
 
     triangularizer = Triangularizer(camera_model, camera_topology)
-    points_predicted = triangularizer.triangularize(initial_state, final_state, keypoint_to_matches)
+    points_predicted = triangularizer.triangularize(initial_state, final_state, keypoint_to_matches_grouped_aggregated)
     triangularizer.visualize_reprojection(points_predicted, image_initial_raw, image_final_raw, initial_state, final_state)
+
     '''
     #print('points_predicted: ', points_predicted)
     procrustes_problem_solver = ProcrustesProblemSolver()
@@ -499,3 +516,43 @@ def test():
 if __name__ == '__main__':
     test()
 
+
+    '''
+    stats = {}
+    topology = {
+        'front': {
+            'indices': set([4,5,6,7]),
+            'f': lambda x: x[0]
+        },
+        'back': {
+            'indices': set([0,1,2,3]),
+            'f': lambda x: x[0]
+        },
+        'up': {
+            'indices': set([0,1,4,5]),
+            'f': lambda x: x[2]
+        },
+        'down': {
+            'indices': set([2,3,6,7]),
+            'f': lambda x: x[2]
+        },
+        'left': {
+            'indices': set([1,2,5,6]),
+            'f': lambda x: x[1]
+        },
+        'right': {
+            'indices': set([0,3,4,7]),
+            'f': lambda x: x[1]
+        }
+    }
+
+    for idx, point_predicted in enumerate(points_predicted):
+        if point_predicted is not None:
+            for side in topology:
+                if idx in topology[side]['indices']:
+                    if side not in stats:
+                        stats[side] = []
+                    stats[side].append( ( topology[side]['f'](point_predicted), idx) )
+    print(stats)
+
+    '''
