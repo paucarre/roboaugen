@@ -133,9 +133,27 @@ class KeypointMatcher():
         coordinates_image = torch.cat([coordinates_image, ones], 1).transpose(0, 1)
         return predictions_image, coordinates_image
 
+
+    def get_probability_old(self, predictions_image, indices_keypoint, initial_and_final_indices, predicted_heatmaps, scale):
+        probability_indices = predictions_image[indices_keypoint[initial_and_final_indices[0]]]
+        heatmap_coordinates = [probability_indices[0].item(), probability_indices[1].item(),
+        int(probability_indices[2].item() // scale), int(probability_indices[3].item() // scale)]
+        probability  = predicted_heatmaps[heatmap_coordinates[0], heatmap_coordinates[1],
+            heatmap_coordinates[3], heatmap_coordinates[2]].item()
+        return probability
+
+    def get_probability(self, probability_indices,  predicted_heatmaps, scale):
+        heatmap_coordinates = [probability_indices[0].item(), probability_indices[1].item(),
+        int(probability_indices[2].item() // scale), int(probability_indices[3].item() // scale)]
+        probability  = predicted_heatmaps[heatmap_coordinates[0], heatmap_coordinates[1],
+            heatmap_coordinates[3], heatmap_coordinates[2]].item()
+        return probability
+
+
     def get_matches_from_predictions(self, predicted_heatmaps, scale, prediction_threshold = 0.1, epipolar_threshold = 3.):
-        predicted_heatmaps = predicted_heatmaps * (predicted_heatmaps > prediction_threshold)
-        coordinate_predictions = self.get_coordinate_predictions(predicted_heatmaps, scale)
+        print('prediction_threshold: ', prediction_threshold)
+        predicted_heatmaps2 = predicted_heatmaps * (predicted_heatmaps > prediction_threshold)
+        coordinate_predictions = self.get_coordinate_predictions(predicted_heatmaps2, scale)
 
         # assume two images
         predictions_initial_image, coordinates_initial_image = self.get_predictions_in_image_index(0, coordinate_predictions)
@@ -168,7 +186,13 @@ class KeypointMatcher():
                         coordinates_final = coordinates_final_image[:2, [indices_final_keypoint[initial_and_final_indices[1]]]]
                         coord_final = (coordinates_final[0], coordinates_final[1])
                         distance = distances_initial_to_final[initial_and_final_indices[0], initial_and_final_indices[1]]
-                        epipolar_match = EpipolarMatch(coord_initial, coord_final, distance)
+
+                        probability_initial  = self.get_probability(predictions_initial_image[indices_initial_keypoint[initial_and_final_indices[0]]],
+                            predicted_heatmaps, scale)
+                        probability_final  = self.get_probability(predictions_final_image[indices_final_keypoint[initial_and_final_indices[1]]],
+                            predicted_heatmaps, scale)
+
+                        epipolar_match = EpipolarMatch(coord_initial, coord_final, distance, probability_initial, probability_final)
                         keypoint_to_matches[keypoint_type].append(epipolar_match)
                 else:
                     print(f'\tNo matches found')
@@ -196,10 +220,12 @@ class KeypointMatcher():
 
 class EpipolarMatch():
 
-    def __init__(self, coord_initial, coord_final, minimum_distance):
+    def __init__(self, coord_initial, coord_final, minimum_distance, probability_initial, probability_final):
         self.coord_initial = coord_initial
         self.coord_final = coord_final
         self.minimum_distance = minimum_distance
+        self.probability_initial = probability_initial
+        self.probability_final = probability_final
 
     def __repr__(self):
         return str(self.__dict__)

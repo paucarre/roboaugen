@@ -58,24 +58,9 @@ class Trainer():
     sum_negative_error = negative_error.permute(2, 3, 0, 1).view(-1, negative_error.size()[0], negative_error.size()[1]).sum(0)
     mean_positive_error = sum_positive_error / positive_area
     mean_negative_error = sum_negative_error / negative_area
-    #print(sum_positive_error, sum_negative_error)
-    #print(positive_area, negative_area)
-    #print(mean_positive_error.size(), mean_negative_error.size())
 
     error_normalized = (mean_positive_error + mean_negative_error) / 2.
     return error_normalized.mean()
-    '''
-    print('START')
-    print(target_heatmaps.size())
-    print(target_heatmaps.permute(2, 3, 0, 1).view(-1,target_heatmaps.size()[0], target_heatmaps.size()[1]).sum(0).size())
-    non_zero = torch.nonzero(target_heatmaps > 0.).cuda()
-    print(non_zero[0])
-    print(non_zero.size())
-    print(target_heatmaps[non_zero[0][0], non_zero[0][1], non_zero[0][2], non_zero[0][3]])
-    print('END')
-    heatmap_target = ((target_heatmaps - predicted_heatmaps) ** 2)# * (1.0 - spatial_penalty)
-    return ( (heatmap_target.data + 1.0) * heatmap_target).mean()
-    '''
 
   def save_train_state(self, epoch, current_iteration, optimizer_higher_resolution, optimizer_silco):
     torch.save({
