@@ -116,15 +116,6 @@ class KeypointMatcher():
         self.config = Config()
         self.epipolar_line_generator = epipolar_line_generator
 
-    def get_coordinate_predictions(self, predicted_heatmaps, scale):
-        coordinate_predictions = (predicted_heatmaps > 0.).nonzero()
-        coordinate_predictions_x = coordinate_predictions[:, 3] * scale
-        coordinate_predictions_y = coordinate_predictions[:, 2] * scale
-        coordinate_predictions[:, 2] = coordinate_predictions_x
-        coordinate_predictions[:, 3] = coordinate_predictions_y
-        return coordinate_predictions
-
-
     def get_predictions_in_image_index(self, image_index, coordinate_predictions):
         indices_image = (coordinate_predictions[:, 0] == image_index).nonzero()[:, 0]
         predictions_image = coordinate_predictions[indices_image, :]
@@ -133,34 +124,33 @@ class KeypointMatcher():
         coordinates_image = torch.cat([coordinates_image, ones], 1).transpose(0, 1)
         return predictions_image, coordinates_image
 
-
-    def get_probability_old(self, predictions_image, indices_keypoint, initial_and_final_indices, predicted_heatmaps, scale):
-        probability_indices = predictions_image[indices_keypoint[initial_and_final_indices[0]]]
-        heatmap_coordinates = [probability_indices[0].item(), probability_indices[1].item(),
-        int(probability_indices[2].item() // scale), int(probability_indices[3].item() // scale)]
-        probability  = predicted_heatmaps[heatmap_coordinates[0], heatmap_coordinates[1],
-            heatmap_coordinates[3], heatmap_coordinates[2]].item()
-        return probability
-
     def get_probability(self, probability_indices,  predicted_heatmaps, scale):
         heatmap_coordinates = [probability_indices[0].item(), probability_indices[1].item(),
-        int(probability_indices[2].item() // scale), int(probability_indices[3].item() // scale)]
+        int(probability_indices[2].item()), int(probability_indices[3].item())]
         probability  = predicted_heatmaps[heatmap_coordinates[0], heatmap_coordinates[1],
-            heatmap_coordinates[3], heatmap_coordinates[2]].item()
+            heatmap_coordinates[2], heatmap_coordinates[3]].item()
         return probability
 
+    def scaled_points(self, coordinates_image, scale):
+        y = ( (coordinates_image[0, :] - 1) * scale ).double() + (scale / 2.)
+        x = ( (coordinates_image[1, :] - 1) * scale ).double() + (scale / 2.)
+        ones = coordinates_image[2, :]
+        scaled_coordinates_image = torch.cat([x.unsqueeze(0), y.unsqueeze(0), ones.unsqueeze(0)], 0)
+        return scaled_coordinates_image
 
     def get_matches_from_predictions(self, predicted_heatmaps, scale, prediction_threshold = 0.1, epipolar_threshold = 3.):
-        print('prediction_threshold: ', prediction_threshold)
-        predicted_heatmaps2 = predicted_heatmaps * (predicted_heatmaps > prediction_threshold)
-        coordinate_predictions = self.get_coordinate_predictions(predicted_heatmaps2, scale)
+        predicted_heatmaps = predicted_heatmaps * (predicted_heatmaps > prediction_threshold)
+        coordinate_predictions = (predicted_heatmaps > 0.).nonzero()
 
         # assume two images
         predictions_initial_image, coordinates_initial_image = self.get_predictions_in_image_index(0, coordinate_predictions)
         predictions_final_image, coordinates_final_image = self.get_predictions_in_image_index(1, coordinate_predictions)
 
+        scaled_initial_coordinates = self.scaled_points(coordinates_initial_image, scale)
+        scaled_final_coordinates = self.scaled_points(coordinates_final_image, scale)
+
         epipolar_lines_in_final = self.epipolar_line_generator.\
-            get_epipolar_lines_in_final_image_from_points_in_initial(coordinates_initial_image)
+            get_epipolar_lines_in_final_image_from_points_in_initial(scaled_initial_coordinates)
 
         keypoint_to_matches = {}
         for keypoint_type in range(predicted_heatmaps.size()[1]):
@@ -172,7 +162,7 @@ class KeypointMatcher():
                 indices_initial_keypoint = indices_initial_keypoint[:, 0]
                 indices_final_keypoint = indices_final_keypoint[:, 0]
                 epipolar_lines = epipolar_lines_in_final[indices_initial_keypoint].double()
-                points = coordinates_final_image[:, indices_final_keypoint].double()
+                points = scaled_final_coordinates[:, indices_final_keypoint].double()
                 distances_initial_to_final = epipolar_lines @ points
                 distances_initial_to_final = torch.sqrt(distances_initial_to_final ** 2)
                 distances_initial_to_final_indices = (distances_initial_to_final < epipolar_threshold).nonzero()
@@ -181,9 +171,9 @@ class KeypointMatcher():
                     print(f'\t{matches} matches found from original initial {distances_initial_to_final.size()[0]} points and {distances_initial_to_final.size()[1]} final points.')
                     for match_index in range(matches):
                         initial_and_final_indices = distances_initial_to_final_indices[match_index]
-                        coordinates_initial = coordinates_initial_image[:2, [indices_initial_keypoint[initial_and_final_indices[0]]]]
+                        coordinates_initial = scaled_initial_coordinates[:2, [indices_initial_keypoint[initial_and_final_indices[0]]]]
                         coord_initial = (coordinates_initial[0], coordinates_initial[1])
-                        coordinates_final = coordinates_final_image[:2, [indices_final_keypoint[initial_and_final_indices[1]]]]
+                        coordinates_final = scaled_final_coordinates[:2, [indices_final_keypoint[initial_and_final_indices[1]]]]
                         coord_final = (coordinates_final[0], coordinates_final[1])
                         distance = distances_initial_to_final[initial_and_final_indices[0], initial_and_final_indices[1]]
 
@@ -193,6 +183,7 @@ class KeypointMatcher():
                             predicted_heatmaps, scale)
 
                         epipolar_match = EpipolarMatch(coord_initial, coord_final, distance, probability_initial, probability_final)
+                        print(epipolar_match)
                         keypoint_to_matches[keypoint_type].append(epipolar_match)
                 else:
                     print(f'\tNo matches found')
