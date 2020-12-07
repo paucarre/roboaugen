@@ -213,25 +213,30 @@ class KeypointMatcher():
         keypoint_to_matches_grouped_aggregated  = {keypoint: matches for keypoint, matches in enumerate(keypoint_to_matches_grouped_aggregated)}
         return keypoint_to_matches_grouped_aggregated
 
-    def group_matches(self, keypoint_to_matches, grouping_distance_threshold = 150.):
+    def compute_point_distances(self, points):
+        points_replicated = np.expand_dims(points, axis=0)
+        points_replicated = np.repeat(points_replicated, points.shape[0], axis=0)
+        point_distances = points_replicated - np.swapaxes(points_replicated, 0, 1)
+        point_distances = point_distances.reshape(point_distances.shape[0] * point_distances.shape[1], points.shape[1])
+        point_distances = np.linalg.norm(point_distances, axis=1)
+        point_distances = point_distances.reshape(points.shape[0], points.shape[0])
+        return point_distances
+
+    def group_matches(self, keypoint_to_matches, grouping_distance_threshold = 15.):
         keypoint_to_matches_grouped = []
         for keypoint in keypoint_to_matches:
             matches_grouped = []
             matches = keypoint_to_matches[keypoint]
             if len(matches) > 1:
-                grouped_match = matches[0]
-                current_group = [grouped_match]
-                for match_idx in range(1, len(matches)):
-                    current_match = matches[match_idx]
-                    distance = ( ( (grouped_match.coord_initial - current_match.coord_initial) ** 2 ).sum() + \
-                        ( (grouped_match.coord_final - current_match.coord_final) ** 2 ).sum() ) / 2.
-                    if distance < grouping_distance_threshold:
-                        current_group.append(current_match)
-                    else:
-                        matches_grouped.append(current_group)
-                        grouped_match = current_match
-                        current_group = [grouped_match]
-                matches_grouped.append(current_group)
+                matches_vectors = np.array([np.concatenate((match.coord_initial, match.coord_final)) for match in matches])
+                match_distances = self.compute_point_distances(matches_vectors)
+                match_distances = match_distances < grouping_distance_threshold
+                matched_left_to_group = np.array([True] * match_distances.shape[0])
+                for match_index in range(match_distances.shape[0]):
+                    matches_to_group = [matches[idx] for idx, is_match in enumerate(match_distances[match_index]) if is_match and matched_left_to_group[idx] ]
+                    if len(matches_to_group) > 0:
+                        matches_grouped.append(matches_to_group)
+                        matched_left_to_group = matched_left_to_group * (1 - match_distances[match_index])
             else:
                 matches_grouped = [matches]
             keypoint_to_matches_grouped.append(matches_grouped)
@@ -432,7 +437,7 @@ def test():
     image_final = camera_model.undistort_image(image_final_raw)
     threshold = 0.1
     # perform inference
-    '''
+
     inferencer = Inferencer(distort=False, keep_dimensions=True, use_cache=False, \
         mode='silco', max_background_objects=1, max_foreground_objects=1)
     supports_folder = 'test/images/'
@@ -458,11 +463,13 @@ def test():
         print(f'{keypoint} has the following amount of matches {len(keypoint_to_matches[keypoint])}')
     keypoint_matcher.draw_keypoint_matches('Initial', keypoint_to_matches, image_initial, image_final)
     keypoint_to_matches = keypoint_matcher.group_matches(keypoint_to_matches)
-    '''
+
 
     #print('keypoint_to_matches')
     #print(keypoint_to_matches)
+
     keypoint_matcher = KeypointMatcher(epipolar_line_generator)
+    '''
     keypoint_to_matches = { \
         0: [],
         1: [],
@@ -473,6 +480,7 @@ def test():
         6: [EpipolarMatch(np.array([289.5584316 , 381.08604377]),  np.array([327.83080316, 361.60429633]),  0.0,  3.1457875072956085,  3.1457875072956085)],
         7: [EpipolarMatch(np.array([371.00668455, 369.94121642]),  np.array([410.71951925, 365.54803626]),  0.0,  2.327524721622467,  2.327524721622467)]
     }
+    '''
 
     image_initial = camera_model.undistort_image(image_initial_raw)
     image_final = camera_model.undistort_image(image_final_raw)
@@ -483,11 +491,30 @@ def test():
     triangularizer = Triangularizer(camera_model, camera_topology)
     points_predicted = triangularizer.triangularize(initial_state, final_state, keypoint_to_matches)
     triangularizer.visualize_reprojection(points_predicted, image_initial_raw, image_final_raw, initial_state, final_state)
-    print(np.linalg.norm(points_predicted[4][0] - points_predicted[5][0]))
-    print(np.linalg.norm(points_predicted[5][0] - points_predicted[6][0]))
-    print(np.linalg.norm(points_predicted[6][0] - points_predicted[7][0]))
-    print(np.linalg.norm(points_predicted[7][0] - points_predicted[4][0]))
+    '''
+    print('CHECKS')
+    #print(points_predicted[4][0].T - points_predicted[5][0])
+    #print(points_predicted[5][0].T - points_predicted[6][0])
+    #print(points_predicted[6][0].T - points_predicted[7][0])
+    #print(points_predicted[7][0].T - points_predicted[4][0])
+    print('INNER')
+    print((points_predicted[4][0] - points_predicted[7][0]).T @ (points_predicted[5][0] - points_predicted[7][0]))
+    print((points_predicted[5][0] - points_predicted[7][0]).T @ (points_predicted[6][0] - points_predicted[7][0]))
+    print((points_predicted[6][0] - points_predicted[4][0]).T @ (points_predicted[7][0] - points_predicted[4][0]))
+    print((points_predicted[7][0] - points_predicted[5][0]).T @ (points_predicted[4][0] - points_predicted[5][0]))
 
+    print('INNER2')
+    print((procrustes_problem_solver.shape_points[4] - procrustes_problem_solver.shape_points[7]).T @
+        (procrustes_problem_solver.shape_points[5]- procrustes_problem_solver.shape_points[7]))
+    print((procrustes_problem_solver.shape_points[5] - procrustes_problem_solver.shape_points[7]).T @
+        (procrustes_problem_solver.shape_points[6] - procrustes_problem_solver.shape_points[7]))
+    print((procrustes_problem_solver.shape_points[6] - procrustes_problem_solver.shape_points[4]).T @
+        (procrustes_problem_solver.shape_points[7] - procrustes_problem_solver.shape_points[4]))
+    print((procrustes_problem_solver.shape_points[7] - procrustes_problem_solver.shape_points[5]).T @
+        (procrustes_problem_solver.shape_points[4] - procrustes_problem_solver.shape_points[5]))
+
+    '''
+    procrustes_problem_solver = ProcrustesProblemSolver()
     '''
     points_predicted = [
             [np.array([-40.,  40.,  0.])],  # 0 - Back-Bottom-Right
@@ -499,9 +526,14 @@ def test():
             [np.array([ 40., -40., 55.])],  # 6 - Front-Top-Left
             [np.array([ 40.,  40., 55.])] ] # 7 - Front-Top-Right
     '''
+
+    print(points_predicted)
     solutions = []
-    procrustes_problem_solver = ProcrustesProblemSolver()
     keypoints_with_values = [idx for idx, points in enumerate(points_predicted) if len(points) > 0]
+    print('POINTS PREDICTED')
+    print(points_predicted)
+
+
     for keypoint_1_idx in range(len(keypoints_with_values)):
         keypoint_1 = keypoints_with_values[keypoint_1_idx]
         for point_in_keypoint_1 in points_predicted[keypoint_1]:
@@ -512,7 +544,7 @@ def test():
                         keypoint_3 = keypoints_with_values[keypoint_3_idx]
                         for point_in_keypoint_3 in points_predicted[keypoint_3]:
                             proposal_points = [None] * len(points_predicted)
-                            #print(f'\t\tkeypoints: {keypoint_1}, {keypoint_2}, {keypoint_3}')
+                            print(f'\t\tkeypoints: {keypoint_1}, {keypoint_2}, {keypoint_3}')
                             proposal_points[keypoint_1] = point_in_keypoint_1
                             proposal_points[keypoint_2] = point_in_keypoint_2
                             proposal_points[keypoint_3] = point_in_keypoint_3
@@ -549,7 +581,6 @@ def test():
                                 y_vector_rotated = y_vector_rotated / np.linalg.norm(y_vector_rotated)
                                 angle_z = np.arccos(y_vector @ y_vector_rotated.T)  * 180. / np.pi
                                 print('Angle rotation in Z: ', angle_z)
-
         #print(y_vector, y_vector_projected_to_xy_plane, )
         #rotation_axis, angle = AxisAng3(so3ToVec(MatrixLog3(rotation)))
         #angle = angle * 180. / np.pi
