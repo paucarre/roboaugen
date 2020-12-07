@@ -57,14 +57,14 @@ class ProcrustesProblemSolver():
     '''
     def __init__(self):
         self.shape_points = np.array([ \
-            [-40.,  -40.,  0.],  # 0 - Back-Bottom-Right
-            [-40., 40.,  0.],  # 1 - Back-Bottom-Left
-            [-40., 40., 55.],  # 2 - Back-Top-Left
-            [-40.,  -40., 55.],  # 3 - Back-Top-Right
-            [ 40.,  -40.,  0.],  # 4 - Front-Bottom-Right
-            [ 40., 40.,  0.],  # 5 - Front-Bottom-Left
-            [ 40., 40., 55.],  # 6 - Front-Top-Left
-            [ 40.,  -40., 55.]\
+            [40.,  -40.,  0.],  # 0 - Back-Bottom-Right
+            [40., 40.,  0.],  # 1 - Back-Bottom-Left
+            [40., 40., 55.],  # 2 - Back-Top-Left
+            [40.,  -40., 55.],  # 3 - Back-Top-Right
+            [ -40.,  -40.,  0.],  # 4 - Front-Bottom-Right
+            [ -40., 40.,  0.],  # 5 - Front-Bottom-Left
+            [ -40., 40., 55.],  # 6 - Front-Top-Left
+            [ -40.,  -40., 55.]\
                 ]) # 7 - Front-Top-Right
         center = self.shape_points.mean(0)
         self.shape_points = self.shape_points - center
@@ -99,7 +99,7 @@ class ProcrustesProblemSolver():
         #basis = basis / np.linalg.det(basis)
         return basis
 
-    def solution_attempt(self, predicted_points, length_threshold, standard_deviation_center_threshold=15):
+    def solution_attempt(self, predicted_points, length_threshold, standard_deviation_center_threshold=10):
         keypoints_with_values = [idx for idx, point in enumerate(predicted_points) if point is not None]
         if len(keypoints_with_values) == 3:
             shape_points_with_matching_predictions = self.shape_points[keypoints_with_values]
