@@ -515,6 +515,7 @@ def test():
 
     '''
     procrustes_problem_solver = ProcrustesProblemSolver()
+
     '''
     points_predicted = [
             [np.array([-40.,  40.,  0.])],  # 0 - Back-Bottom-Right
@@ -528,68 +529,16 @@ def test():
     '''
 
     print(points_predicted)
-    solutions = []
-    keypoints_with_values = [idx for idx, points in enumerate(points_predicted) if len(points) > 0]
-    print('POINTS PREDICTED')
-    print(points_predicted)
+    solutions = procrustes_problem_solver.solve(points_predicted)
+    for solution in solutions.triplet_solutions:
+        rotations = solution.get_degree_rotations_around_axis()
+        translation = solution.translation
+        print('Solution')
+        print(f'\tTranslation: {translation}')
+        print('\tAngle rotation in X: ', rotations[0])
+        print('\tAngle rotation in Y: ', rotations[1])
+        print('\tAngle rotation in Z: ', rotations[2])
 
-
-    for keypoint_1_idx in range(len(keypoints_with_values)):
-        keypoint_1 = keypoints_with_values[keypoint_1_idx]
-        for point_in_keypoint_1 in points_predicted[keypoint_1]:
-            for keypoint_2_idx in range(keypoint_1_idx + 1, len(keypoints_with_values)):
-                keypoint_2 = keypoints_with_values[keypoint_2_idx]
-                for point_in_keypoint_2 in points_predicted[keypoint_2]:
-                    for keypoint_3_idx in range(keypoint_2_idx + 1, len(keypoints_with_values)):
-                        keypoint_3 = keypoints_with_values[keypoint_3_idx]
-                        for point_in_keypoint_3 in points_predicted[keypoint_3]:
-                            proposal_points = [None] * len(points_predicted)
-                            print(f'\t\tkeypoints: {keypoint_1}, {keypoint_2}, {keypoint_3}')
-                            proposal_points[keypoint_1] = point_in_keypoint_1
-                            proposal_points[keypoint_2] = point_in_keypoint_2
-                            proposal_points[keypoint_3] = point_in_keypoint_3
-                            #print(f'keypoints: {point_in_keypoint_1}, {point_in_keypoint_2}, {point_in_keypoint_3}')
-                            solution = procrustes_problem_solver.solve(proposal_points)
-                            if solution is not None:
-                                #solutions.append(solution)
-
-                                translation = solution.transformation[0:3, 3:4]
-                                print(translation)
-
-                                rotation = solution.transformation[0:3, 0:3]
-
-                                z_vector = np.array([0, 0, 1])
-                                z_vector_rotated = rotation @ z_vector
-                                z_vector_rotated = z_vector_rotated
-                                z_vector_rotated[0] = 0
-                                z_vector_rotated = z_vector_rotated / np.linalg.norm(z_vector_rotated)
-                                angle_x = np.arccos(z_vector @ z_vector_rotated.T)  * 180. / np.pi
-                                print('Angle rotation in X: ', angle_x)
-
-                                x_vector = np.array([1, 0, 0])
-                                x_vector_rotated = rotation @ x_vector
-                                x_vector_rotated = x_vector_rotated
-                                x_vector_rotated[1] = 0
-                                x_vector_rotated = x_vector_rotated / np.linalg.norm(x_vector_rotated)
-                                angle_y = np.arccos(x_vector @ x_vector_rotated.T)  * 180. / np.pi
-                                print('Angle rotation in Y: ', angle_y)
-
-                                y_vector = np.array([0, 1, 0])
-                                y_vector_rotated = rotation @ y_vector
-                                y_vector_rotated = y_vector_rotated
-                                y_vector_rotated[2] = 0
-                                y_vector_rotated = y_vector_rotated / np.linalg.norm(y_vector_rotated)
-                                angle_z = np.arccos(y_vector @ y_vector_rotated.T)  * 180. / np.pi
-                                print('Angle rotation in Z: ', angle_z)
-        #print(y_vector, y_vector_projected_to_xy_plane, )
-        #rotation_axis, angle = AxisAng3(so3ToVec(MatrixLog3(rotation)))
-        #angle = angle * 180. / np.pi
-        #print('Rotation with angle and vector', angle, rotation_axis)
-        #print('solution.points',  solution.points)
-        #keypoint_to_matches = { keypoint: matches  if solution.points[keypoint] is not None else [] for keypoint, matches in keypoint_to_matches.items()}
-        #image_initial = camera_model.undistort_image(image_initial_raw)
-        #image_final = camera_model.undistort_image(image_final_raw)
-        #keypoint_matcher.draw_keypoint_matches('From procrustes',  keypoint_to_matches, image_initial, image_final)
 
     #cv2.imshow(f'Point in image 1', image_initial)
     #cv2.namedWindow(f'Point in image 1')

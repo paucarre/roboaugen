@@ -27,12 +27,50 @@ class ProcrustesSolutionType(Enum):
     NEW_SET_OF_POINTS_FOUND = auto()
     SOLUTION_FOUND = auto()
 
-class ProcrustesSolution():
+class ProcrustesTripletSolution():
 
-    def __init__(self, solution_type, points=[], transformation=None):
+    def __init__(self, solution_type, points=[], rotation=None, translation=None):
         self.solution_type = solution_type
         self.points = points
-        self.transformation = transformation
+        self.rotation=rotation
+        self.translation=translation
+
+    def get_transformation(self):
+        transformation = np.concatenate((self.rotation, np.expand_dims(self.translation, axis=0).T), axis=1)
+        transformation = np.concatenate((transformation, np.array([[0, 0, 0, 1]])), axis=0)
+        return transformation
+
+    def get_degree_rotations_around_axis(self):
+        z_vector = np.array([0, 0, 1])
+        z_vector_rotated = self.rotation @ z_vector
+        z_vector_rotated = z_vector_rotated
+        z_vector_rotated[0] = 0
+        z_vector_rotated = z_vector_rotated / np.linalg.norm(z_vector_rotated)
+        angle_x = np.arccos(z_vector @ z_vector_rotated.T)  * 180. / np.pi
+
+        x_vector = np.array([1, 0, 0])
+        x_vector_rotated = self.rotation @ x_vector
+        x_vector_rotated = x_vector_rotated
+        x_vector_rotated[1] = 0
+        x_vector_rotated = x_vector_rotated / np.linalg.norm(x_vector_rotated)
+        angle_y = np.arccos(x_vector @ x_vector_rotated.T)  * 180. / np.pi
+
+        y_vector = np.array([0, 1, 0])
+        y_vector_rotated = self.rotation @ y_vector
+        y_vector_rotated = y_vector_rotated
+        y_vector_rotated[2] = 0
+        y_vector_rotated = y_vector_rotated / np.linalg.norm(y_vector_rotated)
+        angle_z = np.arccos(y_vector @ y_vector_rotated.T)  * 180. / np.pi
+
+        return [angle_x, angle_y, angle_z]
+
+    def __repr__(self):
+        return str(self.__dict__)
+
+class ProcrustesSolution():
+
+    def __init__(self, triplet_solutions):
+        self.triplet_solutions = triplet_solutions
 
     def __repr__(self):
         return str(self.__dict__)
@@ -99,6 +137,33 @@ class ProcrustesProblemSolver():
         #basis = basis / np.linalg.det(basis)
         return basis
 
+
+    def solve(self, points_predicted):
+        #print(points_predicted)
+        solutions = []
+        keypoints_with_values = [idx for idx, points in enumerate(points_predicted) if len(points) > 0]
+        #print('POINTS PREDICTED')
+        #print(points_predicted)
+        for keypoint_1_idx in range(len(keypoints_with_values)):
+            keypoint_1 = keypoints_with_values[keypoint_1_idx]
+            for point_in_keypoint_1 in points_predicted[keypoint_1]:
+                for keypoint_2_idx in range(keypoint_1_idx + 1, len(keypoints_with_values)):
+                    keypoint_2 = keypoints_with_values[keypoint_2_idx]
+                    for point_in_keypoint_2 in points_predicted[keypoint_2]:
+                        for keypoint_3_idx in range(keypoint_2_idx + 1, len(keypoints_with_values)):
+                            keypoint_3 = keypoints_with_values[keypoint_3_idx]
+                            for point_in_keypoint_3 in points_predicted[keypoint_3]:
+                                proposal_points = [None] * len(points_predicted)
+                                print(f'\t\tkeypoints: {keypoint_1}, {keypoint_2}, {keypoint_3}')
+                                proposal_points[keypoint_1] = point_in_keypoint_1
+                                proposal_points[keypoint_2] = point_in_keypoint_2
+                                proposal_points[keypoint_3] = point_in_keypoint_3
+                                #print(f'keypoints: {point_in_keypoint_1}, {point_in_keypoint_2}, {point_in_keypoint_3}')
+                                solution = self.solve_for_point_triplet(proposal_points)
+                                if solution is not None:
+                                    solutions.append(solution)
+        return ProcrustesSolution(solutions)
+
     def solution_attempt(self, predicted_points, length_threshold, standard_deviation_center_threshold=10):
         keypoints_with_values = [idx for idx, point in enumerate(predicted_points) if point is not None]
         if len(keypoints_with_values) == 3:
@@ -110,7 +175,6 @@ class ProcrustesProblemSolver():
             displacement = basis_for_predicted.T @ coordinates
             displacement = predicted_points_with_values - displacement
             standard_deviation_center = displacement.std(0).sum()
-            print('standard_deviation_center', standard_deviation_center)
             if standard_deviation_center < standard_deviation_center_threshold:
                 displacement = displacement.mean(0)
                 centered_predictions = predicted_points_with_values - displacement
@@ -119,33 +183,12 @@ class ProcrustesProblemSolver():
                 difference = np.abs(shape_distances - perdictions_distances) / (perdictions_distances + 0.001)
                 mean_difference = difference.mean(0)
                 keypoints_with_wrong_lengths = mean_difference > length_threshold
-                if keypoints_with_wrong_lengths.sum() > 0 or len(mean_difference) > 3:
-                    # Try all the removals and see which one generates minimum global error
-                    index_with_highest_error = None
-                    highest_error = None
-                    for point_index in range(len(mean_difference)):
-                        current_error = np.delete(np.delete(difference, \
-                            point_index, axis=0), point_index, axis=1).mean()
-                        point_index = keypoints_with_values[point_index]
-                        #print(f'\t\tDistances at index {point_index}: {current_error:0.3}')
-                        if highest_error is None or highest_error < current_error:
-                            highest_error = current_error
-                            index_with_highest_error = point_index
-                    predicted_points[point_index] = None
-                    return ProcrustesSolution(ProcrustesSolutionType.NEW_SET_OF_POINTS_FOUND, predicted_points)
-                else:
-                    #print('\tComputing rotation matrix')
-                    #print('\t\tCentered Predictions')
-                    #print(centered_predictions)
-                    #print('\t\tShape points')
-                    #print(shape_points_with_matching_predictions)
+                if keypoints_with_wrong_lengths.sum() == 0:
                     rotation = basis_for_predicted @ basis_for_shape.T
-                    transformation = np.concatenate((rotation, np.expand_dims(displacement, axis=0).T), axis=1)
-                    transformation = np.concatenate((transformation, np.array([[0, 0, 0, 1]])), axis=0)
-                    return ProcrustesSolution(ProcrustesSolutionType.SOLUTION_FOUND, predicted_points, transformation)
-        return ProcrustesSolution(ProcrustesSolutionType.NO_SOLUTION_FOUND, predicted_points)
+                    return ProcrustesTripletSolution(ProcrustesSolutionType.SOLUTION_FOUND, predicted_points, rotation, displacement)
+        return ProcrustesTripletSolution(ProcrustesSolutionType.NO_SOLUTION_FOUND, predicted_points)
 
-    def solve(self, predicted_points, length_threshold = 0.05):
+    def solve_for_point_triplet(self, predicted_points, length_threshold = 0.05):
         solution = None
         current_solution_type = ProcrustesSolutionType.NEW_SET_OF_POINTS_FOUND
         while current_solution_type == ProcrustesSolutionType.NEW_SET_OF_POINTS_FOUND:
