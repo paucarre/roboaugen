@@ -213,7 +213,7 @@ class KeypointMatcher():
         keypoint_to_matches_grouped_aggregated  = {keypoint: matches for keypoint, matches in enumerate(keypoint_to_matches_grouped_aggregated)}
         return keypoint_to_matches_grouped_aggregated
 
-    def group_matches(self, keypoint_to_matches, grouping_distance_threshold = 100.):
+    def group_matches(self, keypoint_to_matches, grouping_distance_threshold = 150.):
         keypoint_to_matches_grouped = []
         for keypoint in keypoint_to_matches:
             matches_grouped = []
@@ -278,6 +278,10 @@ class Triangularizer():
         self.config = Config()
         self.camera_model = camera_model
         self.camera_matrix = camera_model.undistorted_camera_matrix @ camera_model.trans_robot_to_camera_rotation
+        # TODO: this is a hack to adapt the focals on x and y directions so that there is distance accuracy.
+        # This is to be fixed recalibrating properly the camera
+        self.camera_matrix[0, 1] *= 0.74
+        self.camera_matrix[1, 2] *= 0.74
         self.forward_kinematics = RobotForwardKinematics(camera_robot_topology)
 
         self.shape_points = np.array([ \
@@ -293,50 +297,34 @@ class Triangularizer():
         self.shape_points = self.shape_points - center
 
     def triangularize(self, initial_state, final_state, keypoint_to_matches, triangularization_threshold=10.):
-        '''
-        optimal_sum_error = None
-        optinal_l3 = None
-        for l3 in range(40, 41):
-        '''
         #camera_topology = RobotTopology(l1=142, l2=142, l3=60, h1=20, angle_wide_1=180, angle_wide_2=180 + 90, angle_wide_3=180 + 90)
         #forward_kinematics = RobotForwardKinematics(camera_topology)
         initial_transformation = self.forward_kinematics.get_transformation(initial_state)
         final_transformation = self.forward_kinematics.get_transformation(final_state)
+        #print(self.camera_matrix)
         initial_projection_matrix = self.camera_matrix @ np.linalg.inv(initial_transformation)[:3,:]
         final_projection_matrix = self.camera_matrix @ np.linalg.inv(final_transformation)[:3,:]
         points_predicted = []
-        #sum_error = 0.
-        #errors = 0.
         for keypoint in range(self.config.num_vertices):
             points_predicted_keypoint = []
             if keypoint in keypoint_to_matches:
                 matches = keypoint_to_matches[keypoint]
                 for match in matches:
                     coord_initial = MathUtils.skew([match.coord_initial[0], match.coord_initial[1], 1])
-                    #print(-coord_initial-coord_initial.T)
                     coord_final = MathUtils.skew([match.coord_final[0], match.coord_final[1], 1])
-                    #print(-coord_final-coord_final.T)
                     vector_space_initial = coord_initial @ initial_projection_matrix
                     vector_space_final   = coord_final   @ final_projection_matrix
                     vector_space = np.concatenate((vector_space_initial, vector_space_final), axis=0)
-                    #print('vector_space')
-                    #print(vector_space)
                     #u, s, vh = np.linalg.svd(vector_space)
                     u, s, vh =  svd(vector_space, lapack_driver='gesvd')
                     #S = np.concatenate((np.diag(s), np.array([[0, 0, 0, 0], [0, 0, 0, 0]])), axis=0)
                     #vector_space_r = u @ S @ vh
                     #print('reconstruction error',  np.abs(vector_space - vector_space_r).sum())
-
                     #s[3, 3] = 0
-
                     #u, s, vh = np.linalg.svd(vector_space)
-
                     nullspace = vh[3, :]
                     point = nullspace / nullspace[3]
-
                     triangularization_error = s[3]
-
-                    #print(point, s[3])
                     point = point[:3]
                     point_extended = np.append(point, np.array([1]), axis=0)
                     initial_point = self.camera_matrix @ (np.linalg.inv(initial_transformation) @ point_extended)[:3]
@@ -358,54 +346,9 @@ class Triangularizer():
                         pass
                         print('OUT', keypoint, point, s[3], mean_reprojection_error)
             points_predicted.append(points_predicted_keypoint)
-            '''
-            if errors > 0 and optimal_sum_error is None or optimal_sum_error > sum_error/errors:
-                optimal_sum_error = sum_error/errors
-                optinal_l3 = l3
-                print('optimal_sum_error', optimal_sum_error)
-                print('optinal_l3', optinal_l3)
-            '''
-            #if not match_found:
-            #    points_predicted_keypoint.append(None)
-        #print('optinal_l3', optinal_l3)
         return points_predicted
 
-    def triangularize_global(self, initial_state, final_state, keypoint_to_matches, triangularization_threshold=1000.):
 
-        initial_transformation = self.forward_kinematics.get_transformation(initial_state)
-        final_transformation = self.forward_kinematics.get_transformation(final_state)
-        initial_projection_matrix = self.camera_matrix @ initial_transformation[:3,:]
-        final_projection_matrix = self.camera_matrix @ final_transformation[:3,:]
-
-        vector_spaces = []
-        for keypoint in range(self.config.num_vertices):
-            initial_projected_delta = initial_projection_matrix @ np.append(self.shape_points[keypoint], np.array([0]), axis=0)
-            initial_projected_delta = initial_projected_delta / initial_projected_delta[2]
-            final_projected_delta = final_projection_matrix @ np.append(self.shape_points[keypoint], np.array([0]), axis=0)
-            final_projected_delta = final_projected_delta / final_projected_delta[2]
-            #print(initial_projected_delta, final_projected_delta)
-            if keypoint in keypoint_to_matches:
-                matches = keypoint_to_matches[keypoint]
-                for match in matches:
-                    initial_point = match.coord_initial - initial_projected_delta[:2]
-                    final_point = match.coord_final - final_projected_delta[:2]
-
-                    coord_initial = MathUtils.skew([initial_point[0], initial_point[1], 1])
-                    coord_final = MathUtils.skew([final_point[0], final_point[1], 1])
-                    vector_space_initial = coord_initial @ initial_projection_matrix
-                    vector_space_final   = coord_final   @ final_projection_matrix
-                    vector_space = np.concatenate((vector_space_initial, vector_space_final), axis=0)
-                    vector_spaces.append(vector_space)
-
-        vector_spaces = np.concatenate(vector_spaces, axis=0)
-        u, s, vh = np.linalg.svd(vector_spaces)
-        nullspace = vh[3, :]
-        point = nullspace / nullspace[3]
-        print(point, s)
-
-
-
-        return None
 
     def visualize_reprojection(self, points_predicted, image_initial_raw, image_final_raw, initial_state, final_state):
         image_initial = self.camera_model.undistort_image(image_initial_raw)
@@ -489,8 +432,7 @@ def test():
     image_final = camera_model.undistort_image(image_final_raw)
     threshold = 0.1
     # perform inference
-
-
+    '''
     inferencer = Inferencer(distort=False, keep_dimensions=True, use_cache=False, \
         mode='silco', max_background_objects=1, max_foreground_objects=1)
     supports_folder = 'test/images/'
@@ -510,90 +452,113 @@ def test():
 
     keypoint_matcher = KeypointMatcher(epipolar_line_generator)
     keypoint_to_matches = keypoint_matcher.get_matches_from_predictions(predicted_heatmaps,\
-        scale, prediction_threshold = 0.05, epipolar_threshold = 1.)
+        scale, prediction_threshold = 0.1, epipolar_threshold = 1.)
 
     for keypoint in keypoint_to_matches:
         print(f'{keypoint} has the following amount of matches {len(keypoint_to_matches[keypoint])}')
     keypoint_matcher.draw_keypoint_matches('Initial', keypoint_to_matches, image_initial, image_final)
-
-    #keypoint_to_matches_grouped_aggregated = keypoint_matcher.group_matches(keypoint_to_matches)
-    #print(keypoint_to_matches_grouped_aggregated)
-
+    keypoint_to_matches = keypoint_matcher.group_matches(keypoint_to_matches)
     '''
+
+    #print('keypoint_to_matches')
+    #print(keypoint_to_matches)
     keypoint_matcher = KeypointMatcher(epipolar_line_generator)
-    keypoint_to_matches_grouped_aggregated = { \
+    keypoint_to_matches = { \
         0: [],
         1: [],
-        2: [],#[EpipolarMatch(np.array([266., 354.]), np.array([336.4337, 340.]), 0.0, 1.466281644999981, 1.466281644999981)],
-        3: [EpipolarMatch( np.array([336., 343.]),  np.array([412.5, 342.5]), 0.0,  0.44454849511384964,  0.44454849511384964)],
-        4: [EpipolarMatch( np.array([370., 428.]),  np.array([406., 424.]), 0.0,  3.4283733516931534,  3.4283733516931534)],
-        5: [],
-        6: [],
-        7: []}
-
-    epipolar_lines_in_final = epipolar_line_generator.\
-        get_epipolar_lines_in_final_image_from_points_in_initial(torch.Tensor([266., 354., 1]))
-    print('epipolar_lines_in_final', epipolar_lines_in_final)
-    print('epipolar_lines_in_final', ( epipolar_lines_in_final[0] * 336.4337) + ( epipolar_lines_in_final[1] * 340.) + epipolar_lines_in_final[2] )
-    print(-( (epipolar_lines_in_final[1] * 339.) + epipolar_lines_in_final[2]) / epipolar_lines_in_final[0])
-
-
+        2: [],
+        3: [],
+        4: [EpipolarMatch(np.array([370.67924032, 431.57873732]),  np.array([410.81892447, 426.62777196]),  0.0,  2.2377704232931137,  2.2377704232931137)],
+        5: [EpipolarMatch(np.array([289.97313919, 447.96519016]),  np.array([329.22316038, 421.08814491]),  0.0,  2.320103198289871,  2.320103198289871)],
+        6: [EpipolarMatch(np.array([289.5584316 , 381.08604377]),  np.array([327.83080316, 361.60429633]),  0.0,  3.1457875072956085,  3.1457875072956085)],
+        7: [EpipolarMatch(np.array([371.00668455, 369.94121642]),  np.array([410.71951925, 365.54803626]),  0.0,  2.327524721622467,  2.327524721622467)]
+    }
 
     image_initial = camera_model.undistort_image(image_initial_raw)
     image_final = camera_model.undistort_image(image_final_raw)
-    for keypoint in keypoint_to_matches_grouped_aggregated:
-        print(f'{keypoint} has the following grouped amount of matches {len(keypoint_to_matches_grouped_aggregated[keypoint])}')
-    keypoint_matcher.draw_keypoint_matches('Initial Grouped', keypoint_to_matches_grouped_aggregated, image_initial, image_final)
-    '''
+    for keypoint in keypoint_to_matches:
+        print(f'{keypoint} has the following grouped amount of matches {len(keypoint_to_matches[keypoint])}')
+    keypoint_matcher.draw_keypoint_matches('Initial Grouped', keypoint_to_matches, image_initial, image_final)
 
     triangularizer = Triangularizer(camera_model, camera_topology)
     points_predicted = triangularizer.triangularize(initial_state, final_state, keypoint_to_matches)
     triangularizer.visualize_reprojection(points_predicted, image_initial_raw, image_final_raw, initial_state, final_state)
-    #print(np.linalg.norm(points_predicted[3][0] - points_predicted[4][0]))
+    print(np.linalg.norm(points_predicted[4][0] - points_predicted[5][0]))
+    print(np.linalg.norm(points_predicted[5][0] - points_predicted[6][0]))
+    print(np.linalg.norm(points_predicted[6][0] - points_predicted[7][0]))
+    print(np.linalg.norm(points_predicted[7][0] - points_predicted[4][0]))
 
     '''
-    #print('points_predicted: ', points_predicted)
+    points_predicted = [
+            [np.array([-40.,  40.,  0.])],  # 0 - Back-Bottom-Right
+            [np.array([-40., -40.,  0.])],  # 1 - Back-Bottom-Left
+            [np.array([-40., -40., 55.])],  # 2 - Back-Top-Left
+            [np.array([-40.,  40., 55.])],  # 3 - Back-Top-Right
+            [np.array([ 40.,  40.,  0.])],  # 4 - Front-Bottom-Right
+            [np.array( [ 40., -40.,  0.])],  # 5 - Front-Bottom-Left
+            [np.array([ 40., -40., 55.])],  # 6 - Front-Top-Left
+            [np.array([ 40.,  40., 55.])] ] # 7 - Front-Top-Right
+    '''
+    solutions = []
     procrustes_problem_solver = ProcrustesProblemSolver()
-    solution = procrustes_problem_solver.solve(points_predicted)
-    if solution is not None:
-        #print('solution: ', solution)
-        #print(solution.transformation)
-        rotation = solution.transformation[0:3, 0:3]
+    keypoints_with_values = [idx for idx, points in enumerate(points_predicted) if len(points) > 0]
+    for keypoint_1_idx in range(len(keypoints_with_values)):
+        keypoint_1 = keypoints_with_values[keypoint_1_idx]
+        for point_in_keypoint_1 in points_predicted[keypoint_1]:
+            for keypoint_2_idx in range(keypoint_1_idx + 1, len(keypoints_with_values)):
+                keypoint_2 = keypoints_with_values[keypoint_2_idx]
+                for point_in_keypoint_2 in points_predicted[keypoint_2]:
+                    for keypoint_3_idx in range(keypoint_2_idx + 1, len(keypoints_with_values)):
+                        keypoint_3 = keypoints_with_values[keypoint_3_idx]
+                        for point_in_keypoint_3 in points_predicted[keypoint_3]:
+                            proposal_points = [None] * len(points_predicted)
+                            #print(f'\t\tkeypoints: {keypoint_1}, {keypoint_2}, {keypoint_3}')
+                            proposal_points[keypoint_1] = point_in_keypoint_1
+                            proposal_points[keypoint_2] = point_in_keypoint_2
+                            proposal_points[keypoint_3] = point_in_keypoint_3
+                            #print(f'keypoints: {point_in_keypoint_1}, {point_in_keypoint_2}, {point_in_keypoint_3}')
+                            solution = procrustes_problem_solver.solve(proposal_points)
+                            if solution is not None:
+                                #solutions.append(solution)
 
-        z_vector = np.array([0, 0, 1])
-        z_vector_rotated = rotation @ z_vector
-        z_vector_rotated = z_vector_rotated
-        z_vector_rotated[0] = 0
-        z_vector_rotated = z_vector_rotated / np.linalg.norm(z_vector_rotated)
-        angle_x = np.arccos(z_vector @ z_vector_rotated.T)  * 180. / np.pi
-        print('Angle rotation in X: ', angle_x)
+                                translation = solution.transformation[0:3, 3:4]
+                                print(translation)
 
-        x_vector = np.array([1, 0, 0])
-        x_vector_rotated = rotation @ x_vector
-        x_vector_rotated = x_vector_rotated
-        x_vector_rotated[1] = 0
-        x_vector_rotated = x_vector_rotated / np.linalg.norm(x_vector_rotated)
-        angle_y = np.arccos(x_vector @ x_vector_rotated.T)  * 180. / np.pi
-        print('Angle rotation in Y: ', angle_y)
+                                rotation = solution.transformation[0:3, 0:3]
 
-        y_vector = np.array([0, 1, 0])
-        y_vector_rotated = rotation @ y_vector
-        y_vector_rotated = y_vector_rotated
-        y_vector_rotated[2] = 0
-        y_vector_rotated = y_vector_rotated / np.linalg.norm(y_vector_rotated)
-        angle_z = np.arccos(y_vector @ y_vector_rotated.T)  * 180. / np.pi
-        print('Angle rotation in Z: ', angle_z)
+                                z_vector = np.array([0, 0, 1])
+                                z_vector_rotated = rotation @ z_vector
+                                z_vector_rotated = z_vector_rotated
+                                z_vector_rotated[0] = 0
+                                z_vector_rotated = z_vector_rotated / np.linalg.norm(z_vector_rotated)
+                                angle_x = np.arccos(z_vector @ z_vector_rotated.T)  * 180. / np.pi
+                                print('Angle rotation in X: ', angle_x)
+
+                                x_vector = np.array([1, 0, 0])
+                                x_vector_rotated = rotation @ x_vector
+                                x_vector_rotated = x_vector_rotated
+                                x_vector_rotated[1] = 0
+                                x_vector_rotated = x_vector_rotated / np.linalg.norm(x_vector_rotated)
+                                angle_y = np.arccos(x_vector @ x_vector_rotated.T)  * 180. / np.pi
+                                print('Angle rotation in Y: ', angle_y)
+
+                                y_vector = np.array([0, 1, 0])
+                                y_vector_rotated = rotation @ y_vector
+                                y_vector_rotated = y_vector_rotated
+                                y_vector_rotated[2] = 0
+                                y_vector_rotated = y_vector_rotated / np.linalg.norm(y_vector_rotated)
+                                angle_z = np.arccos(y_vector @ y_vector_rotated.T)  * 180. / np.pi
+                                print('Angle rotation in Z: ', angle_z)
 
         #print(y_vector, y_vector_projected_to_xy_plane, )
         #rotation_axis, angle = AxisAng3(so3ToVec(MatrixLog3(rotation)))
         #angle = angle * 180. / np.pi
         #print('Rotation with angle and vector', angle, rotation_axis)
-        print('solution.points',  solution.points)
-        keypoint_to_matches = { keypoint: matches  if solution.points[keypoint] is not None else [] for keypoint, matches in keypoint_to_matches.items()}
-        image_initial = camera_model.undistort_image(image_initial_raw)
-        image_final = camera_model.undistort_image(image_final_raw)
-        keypoint_matcher.draw_keypoint_matches('From procrustes',  keypoint_to_matches, image_initial, image_final)
-
+        #print('solution.points',  solution.points)
+        #keypoint_to_matches = { keypoint: matches  if solution.points[keypoint] is not None else [] for keypoint, matches in keypoint_to_matches.items()}
+        #image_initial = camera_model.undistort_image(image_initial_raw)
+        #image_final = camera_model.undistort_image(image_final_raw)
+        #keypoint_matcher.draw_keypoint_matches('From procrustes',  keypoint_to_matches, image_initial, image_final)
 
     #cv2.imshow(f'Point in image 1', image_initial)
     #cv2.namedWindow(f'Point in image 1')
@@ -605,7 +570,6 @@ def test():
     #for idx, image in enumerate(images):
     #    inferencer.display_results(f'Inference {idx}', visualize_query[idx: idx + 1], None, predicted_heatmaps[idx: idx + 1], threshold=0.0)
 
-    '''
     cv2.waitKey(0)
 
 if __name__ == '__main__':

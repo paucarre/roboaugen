@@ -8,7 +8,7 @@ import numpy as np
 import cv2
 import torch
 from colour import Color
-
+from scipy.linalg import svd
 
 '''
 Coordinate basis for Model (same as robot)
@@ -82,35 +82,36 @@ class ProcrustesProblemSolver():
         point_distances = point_distances + np.identity(points.shape[0])
         return point_distances
 
+    def create_orthonormal_basis(self, points):
+        v_1 = points[1] - points[0]
+        v_1 = v_1 / np.linalg.norm(v_1)
+        v_2 = points[2] - points[0]
+        v_2 = v_2 / np.linalg.norm(v_2)
+        # reject v_1 from v_2
+        v_2 = v_2 - (v_1 * (v_1.T @ v_2))
+        v_2 = v_2 / np.linalg.norm(v_2)
+        v_3 = np.cross(v_1, v_2)
+        v_1 = np.expand_dims(v_1, axis=0)
+        v_2 = np.expand_dims(v_2, axis=0)
+        v_3 = np.expand_dims(v_3, axis=0)
+        return  np.concatenate((v_1, v_2, v_3), axis=0)
 
     def solution_attempt(self, predicted_points, length_threshold):
-        #
-        # predicted_points =  R @ points
-        # R = U @ V.T where U @ S @ V.T = SVD( predicted_points @ points.T )
-        #
         keypoints_with_values = [idx for idx, point in enumerate(predicted_points) if point is not None]
-        if len(keypoints_with_values) >= 3:
+        if len(keypoints_with_values) == 3:
             shape_points_with_matching_predictions = self.shape_points[keypoints_with_values]
-            #shape_length_with_matching_predictions = self.shape_length[keypoints_with_values]
             predicted_points_with_values = np.array([point for idx, point in enumerate(predicted_points) if point is not None])
-            predicted_points_mean = predicted_points_with_values.mean(0)
-            shape_points_mean = shape_points_with_matching_predictions.mean(0)
-            displacement = predicted_points_mean - shape_points_mean
+            basis_for_shape = self.create_orthonormal_basis(shape_points_with_matching_predictions)
+            basis_for_predicted = self.create_orthonormal_basis(predicted_points_with_values)
+            coordinates = basis_for_shape @ -shape_points_with_matching_predictions[0]
+            displacement = basis_for_predicted.T @ coordinates
             displacement = np.expand_dims(displacement, axis=0)
-            displacements = np.repeat(displacement, shape_points_with_matching_predictions.shape[0], axis=0)
-            centered_predictions = predicted_points_with_values - displacements
+            displacement = predicted_points_with_values[0, :] + displacement
+            centered_predictions = predicted_points_with_values - displacement
             shape_distances = self.compute_point_distances(shape_points_with_matching_predictions)
             perdictions_distances = self.compute_point_distances(centered_predictions)
-            difference = np.abs(shape_distances - perdictions_distances) / perdictions_distances
+            difference = np.abs(shape_distances - perdictions_distances) / (perdictions_distances + 0.001)
             mean_difference = difference.mean(0)
-            print('\tMean Difference:', mean_difference)
-
-            #predictions_length = np.linalg.norm(centered_predictions, axis=1)
-            #percentage_error_length = np.abs((predictions_length - shape_length_with_matching_predictions) / shape_length_with_matching_predictions)
-            #keypoints_with_wrong_lengths = percentage_error_length > length_perc_threshold
-            #print('\tPercentage_error_length', percentage_error_length)
-            #print('\tCentered_predictions', centered_predictions)
-            #print('\tSelf.shape_points', shape_points_with_matching_predictions)
             keypoints_with_wrong_lengths = mean_difference > length_threshold
             if keypoints_with_wrong_lengths.sum() > 0 or len(mean_difference) > 3:
                 # Try all the removals and see which one generates minimum global error
@@ -120,30 +121,26 @@ class ProcrustesProblemSolver():
                     current_error = np.delete(np.delete(difference, \
                         point_index, axis=0), point_index, axis=1).mean()
                     point_index = keypoints_with_values[point_index]
-                    print(f'\t\tDistances at index {point_index}: {current_error:0.3}')
+                    #print(f'\t\tDistances at index {point_index}: {current_error:0.3}')
                     if highest_error is None or highest_error < current_error:
                         highest_error = current_error
                         index_with_highest_error = point_index
-                # remove the point with largest error and try again
-                #global_index_with_max_error = keypoints_with_values[index_with_highest_error]
-                print('removing global index', point_index)
                 predicted_points[point_index] = None
                 return ProcrustesSolution(ProcrustesSolutionType.NEW_SET_OF_POINTS_FOUND, predicted_points)
             else:
-                print('\tComputing rotation matrix')
-                print('\t\tCentered Predictions')
-                print(centered_predictions)
-                print('\t\tShape points')
-                print(shape_points_with_matching_predictions)
-                u, _, vh = np.linalg.svd(centered_predictions @ shape_points_with_matching_predictions.T)
-                rotation = u @ vh
+                #print('\tComputing rotation matrix')
+                #print('\t\tCentered Predictions')
+                #print(centered_predictions)
+                #print('\t\tShape points')
+                #print(shape_points_with_matching_predictions)
+                rotation = basis_for_predicted @ basis_for_shape.T
                 transformation = np.concatenate((rotation, displacement.T), axis=1)
                 transformation = np.concatenate((transformation, np.array([[0, 0, 0, 1]])), axis=0)
                 return ProcrustesSolution(ProcrustesSolutionType.SOLUTION_FOUND, predicted_points, transformation)
         else:
             return ProcrustesSolution(ProcrustesSolutionType.NO_SOLUTION_FOUND, predicted_points)
 
-    def solve(self, predicted_points, length_threshold = 0.1):
+    def solve(self, predicted_points, length_threshold = 0.05):
         solution = None
         current_solution_type = ProcrustesSolutionType.NEW_SET_OF_POINTS_FOUND
         while current_solution_type == ProcrustesSolutionType.NEW_SET_OF_POINTS_FOUND:
