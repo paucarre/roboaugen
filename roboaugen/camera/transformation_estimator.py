@@ -3,6 +3,7 @@ from roboaugen.model.inference import Inferencer
 from robotcontroller.kinematics import RobotTopology, RobotState
 from robotcontroller.ik import IkSolver, RobotForwardKinematics
 
+import itertools
 from enum import Enum, auto
 import numpy as np
 import cv2
@@ -29,11 +30,12 @@ class ProcrustesSolutionType(Enum):
 
 class ProcrustesTripletSolution():
 
-    def __init__(self, solution_type, points=[], rotation=None, translation=None):
+    def __init__(self, solution_type, points=[], keypoint_indices=[], rotation=None, translation=None):
         self.solution_type = solution_type
         self.points = points
         self.rotation=rotation
         self.translation=translation
+        self.keypoint_indices = keypoint_indices
 
     def get_transformation(self):
         transformation = np.concatenate((self.rotation, np.expand_dims(self.translation, axis=0).T), axis=1)
@@ -137,13 +139,23 @@ class ProcrustesProblemSolver():
         #basis = basis / np.linalg.det(basis)
         return basis
 
-
     def solve(self, points_predicted):
-        #print(points_predicted)
+        solutions = self.solve_proposals(points_predicted)
+        if(len(solutions.triplet_solutions) > 0):
+            keypoint_indices = set(itertools.chain(*[solution.keypoint_indices for solution in solutions.triplet_solutions]))
+            keypoint_indices = [idx for idx, points in enumerate(points_predicted) if idx in keypoint_indices]
+            points = [points for idx, points in enumerate(points_predicted) if idx in keypoint_indices]
+            translation_mean = np.array([np.expand_dims(solution.translation, axis=0) for solution in solutions.triplet_solutions]).mean(0)[0]
+            rotation_mean = np.array([np.expand_dims(solution.rotation, axis=0) for solution in solutions.triplet_solutions]).mean(0)[0]
+            solution = ProcrustesTripletSolution(ProcrustesSolutionType.SOLUTION_FOUND, points=points,
+                keypoint_indices=keypoint_indices, rotation=rotation_mean, translation=translation_mean)
+            return solution
+        else:
+            return None
+
+    def solve_proposals(self, points_predicted):
         solutions = []
         keypoints_with_values = [idx for idx, points in enumerate(points_predicted) if len(points) > 0]
-        #print('POINTS PREDICTED')
-        #print(points_predicted)
         for keypoint_1_idx in range(len(keypoints_with_values)):
             keypoint_1 = keypoints_with_values[keypoint_1_idx]
             for point_in_keypoint_1 in points_predicted[keypoint_1]:
@@ -154,7 +166,7 @@ class ProcrustesProblemSolver():
                             keypoint_3 = keypoints_with_values[keypoint_3_idx]
                             for point_in_keypoint_3 in points_predicted[keypoint_3]:
                                 proposal_points = [None] * len(points_predicted)
-                                print(f'\t\tkeypoints: {keypoint_1}, {keypoint_2}, {keypoint_3}')
+                                #print(f'\t\tkeypoints: {keypoint_1}, {keypoint_2}, {keypoint_3}')
                                 proposal_points[keypoint_1] = point_in_keypoint_1
                                 proposal_points[keypoint_2] = point_in_keypoint_2
                                 proposal_points[keypoint_3] = point_in_keypoint_3
@@ -185,7 +197,7 @@ class ProcrustesProblemSolver():
                 keypoints_with_wrong_lengths = mean_difference > length_threshold
                 if keypoints_with_wrong_lengths.sum() == 0:
                     rotation = basis_for_predicted @ basis_for_shape.T
-                    return ProcrustesTripletSolution(ProcrustesSolutionType.SOLUTION_FOUND, predicted_points, rotation, displacement)
+                    return ProcrustesTripletSolution(ProcrustesSolutionType.SOLUTION_FOUND, predicted_points, keypoints_with_values, rotation, displacement)
         return ProcrustesTripletSolution(ProcrustesSolutionType.NO_SOLUTION_FOUND, predicted_points)
 
     def solve_for_point_triplet(self, predicted_points, length_threshold = 0.05):

@@ -113,10 +113,11 @@ def get_projected_bounding_box(all_vertices=False):
     else:
         bound_box = bpy.data.objects['Model'].bound_box
         vertices = [Vector((v[0], v[1], v[2])) for v in bound_box]
-
+    
+    print(vertices)
     mat = bpy.data.objects['Model'].matrix_world
     vertices = [mat @ v for v in vertices]
-
+    print(vertices)
     projected_vertices = get_projected_points_from_vertices(vertices)
 
     return projected_vertices, vertices
@@ -149,9 +150,9 @@ def rotate_object(degrees):
     object =  bpy.data.objects['Model']
     object.rotation_euler = (math.pi / 2., 0.0, math.radians(degrees))
 
-def move_object(x, y):
+def move_object(x, y, z):
     object =  bpy.data.objects['Model']
-    object.location = Vector((x, y, 0.0))
+    object.location = Vector((x, y, z))
 
 def scale_object(scale):
     object = bpy.data.objects['Model']
@@ -164,6 +165,7 @@ def set_light_intensity(energy=100):
     bpy.data.lights['Lamp'].energy = energy
 
 def change_camera_focal_length(lens=35):
+     bpy.data.cameras['Camera'].clip_end = 10000000
      bpy.data.cameras['Camera'].lens = lens
 
 def recreate_light_source():
@@ -192,7 +194,7 @@ def add_object(scale):
     scale_object(scale)
     bpy.ops.transform.rotate(value = -1.5708, orient_axis= 'X')
     change_camera_focal_length(35)
-    move_object(0., 0.)
+    move_object(0., 0., 0.)
     rotate_object(degrees=0.0)
 
 def BVHTreeAndVertices( bbox_vertices ):
@@ -302,11 +304,12 @@ def get_background_ids():
 
 def randomize_scene(sample):
     object_rotation = random.randint(0,45)
-    object_x = random.randint(0, 30)
+    object_x = random.randint(-40, 20)
     object_y = random.randint(-20, 20)
-    object_position = [object_x, object_y]
+    object_z = random.randint(0, 0)
+    object_position = [object_x, object_y, object_z]
     camera_distance = 60
-    camera_height = random.randint(0, 30)
+    camera_height = random.randint(object_z, 30)
     camera_rotation = 0
     light_x = object_x + random.randint(-30,30)
     light_y = object_y + random.randint(-30,30)
@@ -318,31 +321,12 @@ def randomize_scene(sample):
     material_id = random.randint(0, len(materials_model) - 1)
     cast_shadow_id = random.randint(0, 1)
     use_background = True
-    object_scale = 0.2 #+ (random.random() * 0.1)
+    object_scale = 0.1 + (random.random() * 0.2)
     return to_map(light_position, cast_shadow_id, background_id, material_id, \
         focal, object_position, object_rotation, camera_height, camera_distance, \
         light_intensity, camera_rotation, use_background, object_scale)
         
-def target_scene(random_scene):
-    object_rotation = random_scene['object_rotation']
-    object_position = random_scene['object_position']
-    camera_distance = 60
-    camera_height = random_scene['camera_height']
-    camera_rotation = 0
-    light_x = random_scene['object_position'][0]
-    light_y = random_scene['object_position'][1]
-    light_z = 20
-    light_position = [light_x, light_y, light_z]
-    light_intensity = 10000
-    focal = random_scene['focal']
-    background_id = 0
-    material_id = 0
-    cast_shadow_id = False
-    use_background = False
-    object_scale = random_scene['object_scale']
-    return to_map(light_position, cast_shadow_id, background_id, material_id, \
-        focal, object_position, object_rotation, camera_height, camera_distance, \
-        light_intensity, camera_rotation, use_background, object_scale)
+
 
 def apply_scene_data(scene_data):
     add_object(scene_data['object_scale'])
@@ -359,7 +343,10 @@ def apply_scene_data(scene_data):
     rotate_camera(degrees=scene_data['camera_rotation'])
     move_camera(distance=scene_data['camera_distance'],
         height=scene_data['camera_height'])
-    move_object(scene_data['object_position'][0], scene_data['object_position'][1])
+    move_object(\
+        scene_data['object_position'][0], 
+        scene_data['object_position'][1],
+        scene_data['object_position'][2])
     rotate_object(degrees=scene_data['object_rotation'])
 
 def get_projected_visible_vertices():
@@ -401,6 +388,7 @@ def save_data(sample_dir, data):
     write_json(sample_dir, 'data', data)
 
 def generate_random_samples(samples=100):
+    sample_dirs = []
     for sample in range(samples):        
         data = randomize_scene(sample)        
         apply_scene_data(data)
@@ -416,7 +404,9 @@ def generate_random_samples(samples=100):
                 os.makedirs(folder_name)
             sample_dir = f'{folder_name}/{sample_id}'
             save_data(sample_dir, data)
+            sample_dirs.append(sample_dir)
             sample_id += 1
+    return sample_dirs
 
 def display_sample(sample_id):
     data_sample_path = f'{project_root}/data/train/{sample_id}/data.json'
@@ -460,7 +450,8 @@ if __name__ == "__main__":
     scene.render.resolution_percentage = 100
     scene.render.resolution_x = 512
     scene.render.resolution_y = 512
-    generate_random_samples(1)
+    sample_dirs = generate_random_samples(100)
+    print(sample_dirs)
     
     #display_sample(14)
     

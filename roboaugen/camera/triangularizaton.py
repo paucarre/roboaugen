@@ -289,24 +289,9 @@ class Triangularizer():
         self.camera_matrix[1, 2] *= 0.74
         self.forward_kinematics = RobotForwardKinematics(camera_robot_topology)
 
-        self.shape_points = np.array([ \
-            [-40.,  40.,  0.],  # 0 - Back-Bottom-Right
-            [-40., -40.,  0.],  # 1 - Back-Bottom-Left
-            [-40., -40., 55.],  # 2 - Back-Top-Left
-            [-40.,  40., 55.],  # 3 - Back-Top-Right
-            [ 40.,  40.,  0.],  # 4 - Front-Bottom-Right
-            [ 40., -40.,  0.],  # 5 - Front-Bottom-Left
-            [ 40., -40., 55.],  # 6 - Front-Top-Left
-            [ 40.,  40., 55.]]) # 7 - Front-Top-Right
-        center = self.shape_points.mean(0)
-        self.shape_points = self.shape_points - center
-
     def triangularize(self, initial_state, final_state, keypoint_to_matches, triangularization_threshold=10.):
-        #camera_topology = RobotTopology(l1=142, l2=142, l3=60, h1=20, angle_wide_1=180, angle_wide_2=180 + 90, angle_wide_3=180 + 90)
-        #forward_kinematics = RobotForwardKinematics(camera_topology)
         initial_transformation = self.forward_kinematics.get_transformation(initial_state)
         final_transformation = self.forward_kinematics.get_transformation(final_state)
-        #print(self.camera_matrix)
         initial_projection_matrix = self.camera_matrix @ np.linalg.inv(initial_transformation)[:3,:]
         final_projection_matrix = self.camera_matrix @ np.linalg.inv(final_transformation)[:3,:]
         points_predicted = []
@@ -325,8 +310,6 @@ class Triangularizer():
                     #S = np.concatenate((np.diag(s), np.array([[0, 0, 0, 0], [0, 0, 0, 0]])), axis=0)
                     #vector_space_r = u @ S @ vh
                     #print('reconstruction error',  np.abs(vector_space - vector_space_r).sum())
-                    #s[3, 3] = 0
-                    #u, s, vh = np.linalg.svd(vector_space)
                     nullspace = vh[3, :]
                     point = nullspace / nullspace[3]
                     triangularization_error = s[3]
@@ -337,16 +320,12 @@ class Triangularizer():
                     # Final
                     final_point = self.camera_matrix @ (np.linalg.inv(final_transformation) @ point_extended)[:3]
                     final_point = final_point / final_point[2]
-                    #print(initial_point, match.coord_initial)
                     mean_reprojection_error = ( ((initial_point[:2] - match.coord_initial) ** 2).mean() + \
                         ((final_point[:2] - match.coord_final) ** 2).mean() ) / 2.
-
 
                     if triangularization_error < triangularization_threshold:
                         print('IN', keypoint, point, s[3], mean_reprojection_error)
                         points_predicted_keypoint.append(point)
-                        #sum_error += mean_reprojection_error
-                        #errors +=1
                     else:
                         pass
                         print('OUT', keypoint, point, s[3], mean_reprojection_error)
@@ -395,49 +374,18 @@ def test():
 
     camera_topology = RobotTopology(l1=142, l2=142, l3=80, h1=50, angle_wide_1=180, angle_wide_2=180 + 90, angle_wide_3=180 + 90)
 
-
-    #nothing_state = RobotState(linear_1=5, angle_1=to_radians(0.), angle_2=to_radians(0.), angle_3=to_radians(0.))
-    #nothing_transformation = robot_forward_kinamatics.get_transformation(nothing_state)
-    #initial_state = RobotState(linear_1=5, angle_1=to_radians(0.), angle_2=to_radians(0.), angle_3=to_radians(0.))
-    #final_state   = RobotState(linear_1=5, angle_1=to_radians(0.), angle_2=to_radians(-90.), angle_3=to_radians(0.))
-
     initial_state = RobotState(linear_1=5, angle_1=to_radians(0.), angle_2=to_radians(70.), angle_3=to_radians(-20.))
     final_state   = RobotState(linear_1=5, angle_1=to_radians(0.), angle_2=to_radians(-90.), angle_3=to_radians(20.))
-
 
     camera_model = CameraModel(width, height)
     fundamental_matrix_generator = FundamentalMatrixGenerator(camera_model, camera_topology)
     fundamental_matrix = fundamental_matrix_generator.generate_fundamental_matrix(initial_state, final_state)
     epipolar_line_generator = EpipolarLineGenerator(torch.from_numpy(fundamental_matrix))
 
-
-    coords_initial = []
-    coords_final = []
-    # A
-    #coords.append((371, 367))
-    #coords.append((373, 428))
-    #coords.append((292, 446))
-    #coords.append((289, 380))
-    #coords.append((270, 355))
-    #coords.append((338, 344))
-    #coords.append((271, 417))
-
-    # B
-    #coords.append((405, 368))
-    #coords.append((408, 427))
-    #coords.append((419, 400))
-    #coords.append((328, 419))
-    #coords.append((327, 362))
-    #coords.append((347, 342))
-    #coords.append((416, 345))
-
-
-
     image_initial = camera_model.undistort_image(image_initial_raw)
     image_final = camera_model.undistort_image(image_final_raw)
-    threshold = 0.1
-    # perform inference
 
+    # perform inference
     inferencer = Inferencer(distort=False, keep_dimensions=True, use_cache=False, \
         mode='silco', max_background_objects=1, max_foreground_objects=1)
     supports_folder = 'test/images/'
@@ -452,146 +400,91 @@ def test():
     predicted_heatmaps = inferencer.get_model_inference(supports, query)
     target_height, targe_width = predicted_heatmaps.size()[2], predicted_heatmaps.size()[3] # torch.Size([2, 3, 96, 128])
     scale = original_width / targe_width
-    print(f'Original h/w {original_height}, {original_width} => Target h/w {target_height}, {targe_width}. Scales: {original_width / targe_width} | {original_height / target_height}')
+    #print(f'Original h/w {original_height}, {original_width} => Target h/w {target_height}, {targe_width}. Scales: {original_width / targe_width} | {original_height / target_height}')
 
-
+    prediction_threshold = 0.1
     keypoint_matcher = KeypointMatcher(epipolar_line_generator)
     keypoint_to_matches = keypoint_matcher.get_matches_from_predictions(predicted_heatmaps,\
-        scale, prediction_threshold = 0.1, epipolar_threshold = 1.)
+        scale, prediction_threshold = prediction_threshold, epipolar_threshold = 1.)
 
-    for keypoint in keypoint_to_matches:
-        print(f'{keypoint} has the following amount of matches {len(keypoint_to_matches[keypoint])}')
+    #for keypoint in keypoint_to_matches:
+    #    print(f'{keypoint} has the following amount of matches {len(keypoint_to_matches[keypoint])}')
     keypoint_matcher.draw_keypoint_matches('Initial', keypoint_to_matches, image_initial, image_final)
     keypoint_to_matches = keypoint_matcher.group_matches(keypoint_to_matches)
 
-
-    #print('keypoint_to_matches')
-    #print(keypoint_to_matches)
-
     keypoint_matcher = KeypointMatcher(epipolar_line_generator)
-    '''
-    keypoint_to_matches = { \
-        0: [],
-        1: [],
-        2: [],
-        3: [],
-        4: [EpipolarMatch(np.array([370.67924032, 431.57873732]),  np.array([410.81892447, 426.62777196]),  0.0,  2.2377704232931137,  2.2377704232931137)],
-        5: [EpipolarMatch(np.array([289.97313919, 447.96519016]),  np.array([329.22316038, 421.08814491]),  0.0,  2.320103198289871,  2.320103198289871)],
-        6: [EpipolarMatch(np.array([289.5584316 , 381.08604377]),  np.array([327.83080316, 361.60429633]),  0.0,  3.1457875072956085,  3.1457875072956085)],
-        7: [EpipolarMatch(np.array([371.00668455, 369.94121642]),  np.array([410.71951925, 365.54803626]),  0.0,  2.327524721622467,  2.327524721622467)]
-    }
-    '''
 
     image_initial = camera_model.undistort_image(image_initial_raw)
     image_final = camera_model.undistort_image(image_final_raw)
-    for keypoint in keypoint_to_matches:
-        print(f'{keypoint} has the following grouped amount of matches {len(keypoint_to_matches[keypoint])}')
+    #for keypoint in keypoint_to_matches:
+    #    print(f'{keypoint} has the following grouped amount of matches {len(keypoint_to_matches[keypoint])}')
     keypoint_matcher.draw_keypoint_matches('Initial Grouped', keypoint_to_matches, image_initial, image_final)
 
+    image_initial = camera_model.undistort_image(image_initial_raw)
+    image_final = camera_model.undistort_image(image_final_raw)
     triangularizer = Triangularizer(camera_model, camera_topology)
     points_predicted = triangularizer.triangularize(initial_state, final_state, keypoint_to_matches)
     triangularizer.visualize_reprojection(points_predicted, image_initial_raw, image_final_raw, initial_state, final_state)
-    '''
-    print('CHECKS')
-    #print(points_predicted[4][0].T - points_predicted[5][0])
-    #print(points_predicted[5][0].T - points_predicted[6][0])
-    #print(points_predicted[6][0].T - points_predicted[7][0])
-    #print(points_predicted[7][0].T - points_predicted[4][0])
-    print('INNER')
-    print((points_predicted[4][0] - points_predicted[7][0]).T @ (points_predicted[5][0] - points_predicted[7][0]))
-    print((points_predicted[5][0] - points_predicted[7][0]).T @ (points_predicted[6][0] - points_predicted[7][0]))
-    print((points_predicted[6][0] - points_predicted[4][0]).T @ (points_predicted[7][0] - points_predicted[4][0]))
-    print((points_predicted[7][0] - points_predicted[5][0]).T @ (points_predicted[4][0] - points_predicted[5][0]))
-
-    print('INNER2')
-    print((procrustes_problem_solver.shape_points[4] - procrustes_problem_solver.shape_points[7]).T @
-        (procrustes_problem_solver.shape_points[5]- procrustes_problem_solver.shape_points[7]))
-    print((procrustes_problem_solver.shape_points[5] - procrustes_problem_solver.shape_points[7]).T @
-        (procrustes_problem_solver.shape_points[6] - procrustes_problem_solver.shape_points[7]))
-    print((procrustes_problem_solver.shape_points[6] - procrustes_problem_solver.shape_points[4]).T @
-        (procrustes_problem_solver.shape_points[7] - procrustes_problem_solver.shape_points[4]))
-    print((procrustes_problem_solver.shape_points[7] - procrustes_problem_solver.shape_points[5]).T @
-        (procrustes_problem_solver.shape_points[4] - procrustes_problem_solver.shape_points[5]))
-
-    '''
     procrustes_problem_solver = ProcrustesProblemSolver()
+    solution = procrustes_problem_solver.solve(points_predicted)
+    if solution is not None:
+        hues = torch.arange(start=0,end=179., step = 179 / (config.num_vertices + 1) )
+        colors = [Color(hsl=(hue/180, 1, 0.5)).rgb for hue in hues]
+        colors = [(int(color[0] * 255), int(color[1] * 255), int(color[2] * 255)) for color in colors]
+        points_transformed = (procrustes_problem_solver.shape_points @ solution.rotation) + solution.translation
+        ones = np.expand_dims( np.array([1.] * points_transformed.shape[0]).T, axis=1)
+        points_transformed = np.concatenate((points_transformed, ones), axis=1).T
+
+        camera_matrix = camera_model.undistorted_camera_matrix @ camera_model.trans_robot_to_camera_rotation
+        # TODO: this is a hack to adapt the focals on x and y directions so that there is distance accuracy.
+        # This is to be fixed recalibrating properly the camera
+        camera_matrix[0, 1] *= 0.74
+        camera_matrix[1, 2] *= 0.74
+        forward_kinematics = RobotForwardKinematics(camera_topology)
+        initial_transformation = forward_kinematics.get_transformation(initial_state)
+        final_transformation = forward_kinematics.get_transformation(final_state)
+        initial_projection_matrix = camera_matrix @ np.linalg.inv(initial_transformation)[:3,:]
+        initial_poits = initial_projection_matrix @ points_transformed
+        initial_poits = initial_poits / initial_poits[2, :]
+        final_projection_matrix = camera_matrix @ np.linalg.inv(final_transformation)[:3,:]
+        final_points = final_projection_matrix @ points_transformed
+        final_points = final_points / final_points[2, :]
+        #print(initial_poits)
+        #print(final_points)
+        #print(points_rotated)
+        for keypoint in range(final_points.shape[1]):
+            color = colors[keypoint]
+            thickness = 2 if keypoint in solution.keypoint_indices else 1
+            radius = 4 if keypoint in solution.keypoint_indices else 2
+            initial_point = initial_poits[:, keypoint]
+            final_point = final_points[:, keypoint]
+            image_initial = cv2.circle(image_initial, (int(initial_point[0]), int(initial_point[1])), 4, color, thickness=thickness)
+            image_final = cv2.circle(image_final, (int(final_point[0]), int(final_point[1])), 4, color, thickness=thickness)
+
+        cv2.imshow(f'Transfomation Predicted | Point in Initial Image', image_initial)
+        cv2.imshow(f'Transfomation Predicted | Point in Final Image', image_final)
+
+
+    print(solution)
 
     '''
-    points_predicted = [
-            [np.array([-40.,  40.,  0.])],  # 0 - Back-Bottom-Right
-            [np.array([-40., -40.,  0.])],  # 1 - Back-Bottom-Left
-            [np.array([-40., -40., 55.])],  # 2 - Back-Top-Left
-            [np.array([-40.,  40., 55.])],  # 3 - Back-Top-Right
-            [np.array([ 40.,  40.,  0.])],  # 4 - Front-Bottom-Right
-            [np.array( [ 40., -40.,  0.])],  # 5 - Front-Bottom-Left
-            [np.array([ 40., -40., 55.])],  # 6 - Front-Top-Left
-            [np.array([ 40.,  40., 55.])] ] # 7 - Front-Top-Right
-    '''
-
-    print(points_predicted)
-    solutions = procrustes_problem_solver.solve(points_predicted)
     for solution in solutions.triplet_solutions:
         rotations = solution.get_degree_rotations_around_axis()
         translation = solution.translation
         print('Solution')
+        print(f'\tKeypoints: {solution.keypoint_indices}')
+        print(f'\tPoints: {solution.points}')
         print(f'\tTranslation: {translation}')
         print('\tAngle rotation in X: ', rotations[0])
         print('\tAngle rotation in Y: ', rotations[1])
         print('\tAngle rotation in Z: ', rotations[2])
+    '''
 
-
-    #cv2.imshow(f'Point in image 1', image_initial)
-    #cv2.namedWindow(f'Point in image 1')
-    #cv2.setMouseCallback(f'Point in image 1', print_coordinates)
-    #cv2.imshow(f'Epipolar line in second image', image_final)
-
-
-    #predicted_heatmaps = predicted_heatmaps * (predicted_heatmaps > 0.05)
-    #for idx, image in enumerate(images):
-    #    inferencer.display_results(f'Inference {idx}', visualize_query[idx: idx + 1], None, predicted_heatmaps[idx: idx + 1], threshold=0.0)
+    predicted_heatmaps = predicted_heatmaps * (predicted_heatmaps > prediction_threshold)
+    for idx, image in enumerate(images):
+        inferencer.display_results(f'Inference {idx}', visualize_query[idx: idx + 1], None, predicted_heatmaps[idx: idx + 1], threshold=0.0)
 
     cv2.waitKey(0)
 
 if __name__ == '__main__':
     test()
-
-
-    '''
-    stats = {}
-    topology = {
-        'front': {
-            'indices': set([4,5,6,7]),
-            'f': lambda x: x[0]
-        },
-        'back': {
-            'indices': set([0,1,2,3]),
-            'f': lambda x: x[0]
-        },
-        'up': {
-            'indices': set([0,1,4,5]),
-            'f': lambda x: x[2]
-        },
-        'down': {
-            'indices': set([2,3,6,7]),
-            'f': lambda x: x[2]
-        },
-        'left': {
-            'indices': set([1,2,5,6]),
-            'f': lambda x: x[1]
-        },
-        'right': {
-            'indices': set([0,3,4,7]),
-            'f': lambda x: x[1]
-        }
-    }
-
-    for idx, point_predicted in enumerate(points_predicted):
-        if point_predicted is not None:
-            for side in topology:
-                if idx in topology[side]['indices']:
-                    if side not in stats:
-                        stats[side] = []
-                    stats[side].append( ( topology[side]['f'](point_predicted), idx) )
-    print(stats)
-
-    '''
