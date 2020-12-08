@@ -2,6 +2,7 @@ from roboaugen.core.config import Config
 from roboaugen.model.inference import Inferencer
 from robotcontroller.kinematics import RobotTopology, RobotState
 from robotcontroller.ik import IkSolver, RobotForwardKinematics
+from roboaugen.camera.model import CameraModel
 
 import itertools
 from enum import Enum, auto
@@ -210,6 +211,47 @@ class ProcrustesProblemSolver():
             return None
         else:
             return solution
+
+    def visualize(self, solution, camera_topology, initial_state, final_state, image_initial_raw, image_final_raw):
+        height, width = image_final_raw.shape[0], image_final_raw.shape[1]
+        camera_model = CameraModel(width, height)
+        config = Config()
+        image_initial = camera_model.undistort_image(image_initial_raw)
+        image_final = camera_model.undistort_image(image_final_raw)
+        if solution is not None:
+            hues = torch.arange(start=0,end=179., step = 179 / (config.num_vertices + 1) )
+            colors = [Color(hsl=(hue/180, 1, 0.5)).rgb for hue in hues]
+            colors = [(int(color[0] * 255), int(color[1] * 255), int(color[2] * 255)) for color in colors]
+            points_transformed = (self.shape_points @ solution.rotation) + solution.translation
+            ones = np.expand_dims( np.array([1.] * points_transformed.shape[0]).T, axis=1)
+            points_transformed = np.concatenate((points_transformed, ones), axis=1).T
+
+            camera_matrix = camera_model.undistorted_camera_matrix @ camera_model.trans_robot_to_camera_rotation
+            # TODO: this is a hack to adapt the focals on x and y directions so that there is distance accuracy.
+            # This is to be fixed recalibrating properly the camera
+            camera_matrix[0, 1] *= 0.74
+            camera_matrix[1, 2] *= 0.74
+            forward_kinematics = RobotForwardKinematics(camera_topology)
+            initial_transformation = forward_kinematics.get_transformation(initial_state)
+            final_transformation = forward_kinematics.get_transformation(final_state)
+            initial_projection_matrix = camera_matrix @ np.linalg.inv(initial_transformation)[:3,:]
+            initial_poits = initial_projection_matrix @ points_transformed
+            initial_poits = initial_poits / initial_poits[2, :]
+            final_projection_matrix = camera_matrix @ np.linalg.inv(final_transformation)[:3,:]
+            final_points = final_projection_matrix @ points_transformed
+            final_points = final_points / final_points[2, :]
+            for keypoint in range(final_points.shape[1]):
+                color = colors[keypoint]
+                thickness = 1 if keypoint in solution.keypoint_indices else 1
+                radius = 4 if keypoint in solution.keypoint_indices else 2
+                initial_point = initial_poits[:, keypoint]
+                final_point = final_points[:, keypoint]
+                image_initial = cv2.circle(image_initial, (int(initial_point[0]), int(initial_point[1])), radius, color, thickness=thickness)
+                image_final = cv2.circle(image_final, (int(final_point[0]), int(final_point[1])), radius, color, thickness=thickness)
+
+            cv2.imshow(f'Transfomation Predicted | Point in Initial Image', image_initial)
+            cv2.imshow(f'Transfomation Predicted | Point in Final Image', image_final)
+
 
 if __name__ == '__main__':
     solver = ProcrustesProblemSolver()

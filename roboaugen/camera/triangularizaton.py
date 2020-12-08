@@ -4,40 +4,14 @@ from roboaugen.camera.transformation_estimator import ProcrustesProblemSolver
 from robotcontroller.kinematics import RobotTopology, RobotState
 from robotcontroller.ik import IkSolver, RobotForwardKinematics
 from modern_robotics import *
+from roboaugen.camera.model import CameraModel
+from roboaugen.camera.model import MathUtils
 
 from scipy.linalg import svd
 import numpy as np
 import cv2
 import torch
 from colour import Color
-
-class CameraModel():
-
-    def __init__(self, width, height):
-        self.trans_robot_to_camera_rotation = np.array([ \
-                                            [0., -1., 0.],
-                                            [0.,  0.,-1.],
-                                            [1.,  0., 0.]])
-        self.config = Config()
-        self.camera_matrix, self.distortion_coefficients = self.config.load_camera_parameters()
-        self.undistorted_camera_matrix, self.region_of_interest = cv2.getOptimalNewCameraMatrix(self.camera_matrix, self.distortion_coefficients,\
-            (width, height), 0, (width, height) )
-
-    def undistort_image(self, image):
-        return cv2.undistort(image, \
-            self.camera_matrix, \
-            self.distortion_coefficients, \
-            None, \
-            self.undistorted_camera_matrix)
-
-
-class MathUtils():
-    #skew  = [0 -v(3) v(2); v(3) 0 -v(1); -v(2) v(1) 0]
-    @staticmethod
-    def skew(x):
-        return np.array([[0., -x[2], x[1]],
-                        [x[2], 0., -x[0]],
-                        [-x[1], x[0], 0.]])
 
 class FundamentalMatrixGenerator():
 
@@ -344,7 +318,6 @@ class Triangularizer():
         hues = torch.arange(start=0,end=179., step = 179 / (self.config.num_vertices + 1) )
         colors = [Color(hsl=(hue / 180, 1, 0.5)).rgb for hue in hues]
         colors = [(int(color[0] * 255), int(color[1] * 255), int(color[2] * 255)) for color in colors]
-        #print('points_predicted', len(points_predicted))
         for idx, points_in_keypoint in enumerate(points_predicted):
             color = colors[idx]
             for point_predicted in points_in_keypoint:
@@ -356,7 +329,6 @@ class Triangularizer():
                 # Final
                 final_point = self.camera_matrix @ (final_transformation @ point_predicted)[:3]
                 final_point = final_point / final_point[2]
-                #print((int(final_point[0]), int(final_point[1])))
                 image_final = cv2.circle(image_final, (int(final_point[0]), int(final_point[1])), 4, color, thickness=2)
 
         cv2.imshow(f'Reprojected | Point in Initial Image', image_initial)
@@ -420,65 +392,13 @@ def test():
     #    print(f'{keypoint} has the following grouped amount of matches {len(keypoint_to_matches[keypoint])}')
     keypoint_matcher.draw_keypoint_matches('Initial Grouped', keypoint_to_matches, image_initial, image_final)
 
-    image_initial = camera_model.undistort_image(image_initial_raw)
-    image_final = camera_model.undistort_image(image_final_raw)
     triangularizer = Triangularizer(camera_model, camera_topology)
     points_predicted = triangularizer.triangularize(initial_state, final_state, keypoint_to_matches)
     triangularizer.visualize_reprojection(points_predicted, image_initial_raw, image_final_raw, initial_state, final_state)
+
     procrustes_problem_solver = ProcrustesProblemSolver()
     solution = procrustes_problem_solver.solve(points_predicted)
-    if solution is not None:
-        hues = torch.arange(start=0,end=179., step = 179 / (config.num_vertices + 1) )
-        colors = [Color(hsl=(hue/180, 1, 0.5)).rgb for hue in hues]
-        colors = [(int(color[0] * 255), int(color[1] * 255), int(color[2] * 255)) for color in colors]
-        points_transformed = (procrustes_problem_solver.shape_points @ solution.rotation) + solution.translation
-        ones = np.expand_dims( np.array([1.] * points_transformed.shape[0]).T, axis=1)
-        points_transformed = np.concatenate((points_transformed, ones), axis=1).T
-
-        camera_matrix = camera_model.undistorted_camera_matrix @ camera_model.trans_robot_to_camera_rotation
-        # TODO: this is a hack to adapt the focals on x and y directions so that there is distance accuracy.
-        # This is to be fixed recalibrating properly the camera
-        camera_matrix[0, 1] *= 0.74
-        camera_matrix[1, 2] *= 0.74
-        forward_kinematics = RobotForwardKinematics(camera_topology)
-        initial_transformation = forward_kinematics.get_transformation(initial_state)
-        final_transformation = forward_kinematics.get_transformation(final_state)
-        initial_projection_matrix = camera_matrix @ np.linalg.inv(initial_transformation)[:3,:]
-        initial_poits = initial_projection_matrix @ points_transformed
-        initial_poits = initial_poits / initial_poits[2, :]
-        final_projection_matrix = camera_matrix @ np.linalg.inv(final_transformation)[:3,:]
-        final_points = final_projection_matrix @ points_transformed
-        final_points = final_points / final_points[2, :]
-        #print(initial_poits)
-        #print(final_points)
-        #print(points_rotated)
-        for keypoint in range(final_points.shape[1]):
-            color = colors[keypoint]
-            thickness = 2 if keypoint in solution.keypoint_indices else 1
-            radius = 4 if keypoint in solution.keypoint_indices else 2
-            initial_point = initial_poits[:, keypoint]
-            final_point = final_points[:, keypoint]
-            image_initial = cv2.circle(image_initial, (int(initial_point[0]), int(initial_point[1])), 4, color, thickness=thickness)
-            image_final = cv2.circle(image_final, (int(final_point[0]), int(final_point[1])), 4, color, thickness=thickness)
-
-        cv2.imshow(f'Transfomation Predicted | Point in Initial Image', image_initial)
-        cv2.imshow(f'Transfomation Predicted | Point in Final Image', image_final)
-
-
-    print(solution)
-
-    '''
-    for solution in solutions.triplet_solutions:
-        rotations = solution.get_degree_rotations_around_axis()
-        translation = solution.translation
-        print('Solution')
-        print(f'\tKeypoints: {solution.keypoint_indices}')
-        print(f'\tPoints: {solution.points}')
-        print(f'\tTranslation: {translation}')
-        print('\tAngle rotation in X: ', rotations[0])
-        print('\tAngle rotation in Y: ', rotations[1])
-        print('\tAngle rotation in Z: ', rotations[2])
-    '''
+    procrustes_problem_solver.visualize(solution, camera_topology, initial_state, final_state, image_initial_raw, image_final_raw)
 
     predicted_heatmaps = predicted_heatmaps * (predicted_heatmaps > prediction_threshold)
     for idx, image in enumerate(images):
