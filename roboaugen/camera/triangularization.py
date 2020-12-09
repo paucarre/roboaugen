@@ -420,14 +420,15 @@ def test():
     initial_state = RobotState(linear_1=5, angle_1=to_radians(0.), angle_2=to_radians(70.), angle_3=to_radians(-20.))
     final_state   = RobotState(linear_1=5, angle_1=to_radians(0.), angle_2=to_radians(-90.), angle_3=to_radians(20.))
     end_to_end_transformation_estimator = EndToEndTransformationEstimator()
-    solution, image_initial_procrustes, image_final_procrustes, image_initial_grouped, image_final_grouped, heatmap_images = \
+    end_to_end_solution = \
         end_to_end_transformation_estimator.compute_transformation(initial_state, final_state, image_initial_raw, image_final_raw)
+    solution = end_to_end_solution.solution
     if solution is not None:
         print("".join(['-'] * 40))
         print('Solution')
         print(solution)
-        visual_targets_initial, visual_predictions_initial, visual_suports_initial = heatmap_images[0]
-        visual_targets_final, visual_predictions_final, visual_suports_final = heatmap_images[1]
+        visual_targets_initial, visual_predictions_initial, visual_suports_initial = end_to_end_solution.heatmap_images[0]
+        visual_targets_final, visual_predictions_final, visual_suports_final = end_to_end_solution.heatmap_images[1]
         if visual_targets_initial is not None:
             cv2.imshow(f'Targets | Image 1', visual_targets_initial)
         if visual_predictions_initial is not None:
@@ -442,15 +443,15 @@ def test():
             cv2.imshow(f'Supports | Image 2', visual_suports_final)
 
         # Grouped
-        cv2.imshow(f'Grouped | Point in image 1', image_initial_grouped)
+        cv2.imshow(f'Grouped | Point in image 1', end_to_end_solution.image_initial_grouped)
         cv2.namedWindow(f'Grouped | Point in image 1')
         cv2.setMouseCallback(f'Grouped | Point in image 1', print_coordinates)
-        cv2.imshow(f'Grouped | Epipolar line in second image', image_final_grouped)
+        cv2.imshow(f'Grouped | Epipolar line in second image', end_to_end_solution.image_final_grouped)
         cv2.namedWindow(f'Grouped | Epipolar line in second image')
         cv2.setMouseCallback(f'Grouped | Epipolar line in second image', print_coordinates)
         # Final solution
-        cv2.imshow(f'Transfomation Predicted | Point in Initial Image', image_initial_procrustes)
-        cv2.imshow(f'Transfomation Predicted | Point in Final Image', image_final_procrustes)
+        cv2.imshow(f'Transfomation Predicted | Point in Initial Image', end_to_end_solution.image_initial_procrustes)
+        cv2.imshow(f'Transfomation Predicted | Point in Final Image', end_to_end_solution.image_final_procrustes)
 
     cv2.waitKey()
 

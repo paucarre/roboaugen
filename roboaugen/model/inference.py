@@ -114,7 +114,7 @@ class Inferencer():
       visual_suports = [Inferencer.to_numpy_image(visual_suports[sample_idx]) for sample_idx in range(visual_suports.size()[0])]
       visual_suports = np.hstack(visual_suports)
 
-      #cv2.imshow(f'{label} Supports', visualize_suports)
+      #cv2.imshow(f'{label} Supports', visual_suports)
       #cv2.imshow(f'{label} - Targets - Spatial Penalty - Predictions', images)
       #cv2.imshow(f'{label} Predictions', predictions)
     return visual_targets, visual_predictions, visual_suports
