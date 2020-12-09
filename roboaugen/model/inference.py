@@ -31,9 +31,9 @@ class Inferencer():
     self.max_foreground_objects = max_foreground_objects
     self.dataset = ProjectedMeshDataset(self.config.input_height, self.config.input_width, self.config.num_vertices,
       self.max_background_objects, self.max_foreground_objects, distort=self.distort, keep_dimensions=self.keep_dimensions, use_cache=self.use_cache)
-    self.higher_resolution = self.config.load_higher_resolution_model().cpu()
-    self.silco = self.config.load_silco_model().cpu()
-    self.backbone = self.config.load_mobilenet_model().cpu()
+    self.higher_resolution = self.config.load_higher_resolution_model().cuda()
+    self.silco = self.config.load_silco_model().cuda()
+    self.backbone = self.config.load_mobilenet_model().cuda()
 
   @staticmethod
   def to_numpy_image(tensor):
@@ -99,21 +99,25 @@ class Inferencer():
     return predicted_heatmaps
 
   def display_results(self, label, visualize_query, visualize_suports, predicted_heatmaps, threshold, target_heatmap=None, spatial_penalty=None):
+    visual_targets, visual_predictions, visual_suports = None, None, None
+
     predicted_heatmaps = F.interpolate(predicted_heatmaps, size=(visualize_query.size()[2], visualize_query.size()[3]), mode='bilinear')
     predicted_heatmaps = predicted_heatmaps.detach().cpu()
-    predictions = self.display_heatmap('Predictions', visualize_query, predicted_heatmaps, threshold)
+    visual_predictions = self.display_heatmap('Predictions', visualize_query, predicted_heatmaps, threshold)
     if target_heatmap is not None:
       targets = self.display_heatmap('Targets', visualize_query, target_heatmap, threshold)
       spatial_penalty = self.display_heatmap('Spatial Penalty', visualize_query, spatial_penalty, threshold)
       images = np.hstack((targets, spatial_penalty, predictions))
-      cv2.imshow(f'{label} - Targets - Spatial Penalty - Predictions', images)
-    else:
-      cv2.imshow(f'{label} Predictions', predictions)
+      visual_targets = images
     if visualize_suports is not None:
-      visualize_suports = visualize_suports.squeeze(0)
-      visualize_suports = [Inferencer.to_numpy_image(visualize_suports[sample_idx]) for sample_idx in range(visualize_suports.size()[0])]
-      visualize_suports = np.hstack(visualize_suports)
-      cv2.imshow(f'{label} Supports', visualize_suports)
+      visual_suports = visualize_suports.squeeze(0)
+      visual_suports = [Inferencer.to_numpy_image(visual_suports[sample_idx]) for sample_idx in range(visual_suports.size()[0])]
+      visual_suports = np.hstack(visual_suports)
+
+      #cv2.imshow(f'{label} Supports', visualize_suports)
+      #cv2.imshow(f'{label} - Targets - Spatial Penalty - Predictions', images)
+      #cv2.imshow(f'{label} Predictions', predictions)
+    return visual_targets, visual_predictions, visual_suports
 
 @click.command()
 @click.option("--sampleid", default=1, help="Sample ID.")

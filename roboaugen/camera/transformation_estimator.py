@@ -248,9 +248,8 @@ class ProcrustesProblemSolver():
                 final_point = final_points[:, keypoint]
                 image_initial = cv2.circle(image_initial, (int(initial_point[0]), int(initial_point[1])), radius, color, thickness=thickness)
                 image_final = cv2.circle(image_final, (int(final_point[0]), int(final_point[1])), radius, color, thickness=thickness)
+        return image_initial, image_final
 
-            cv2.imshow(f'Transfomation Predicted | Point in Initial Image', image_initial)
-            cv2.imshow(f'Transfomation Predicted | Point in Final Image', image_final)
 
 
 if __name__ == '__main__':

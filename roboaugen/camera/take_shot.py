@@ -5,7 +5,7 @@ import os
 import math
 import sys
 import click
-from roboaugen.camera.triangularizaton import CameraModel
+from roboaugen.camera.model import CameraModel
 
 
 @click.command()

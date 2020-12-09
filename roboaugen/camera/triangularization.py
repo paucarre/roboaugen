@@ -129,7 +129,7 @@ class KeypointMatcher():
 
         keypoint_to_matches = {}
         for keypoint_type in range(predicted_heatmaps.size()[1]):
-            print(f'Getting matches for keypoint type index {keypoint_type}')
+            #print(f'Getting matches for keypoint type index {keypoint_type}')
             indices_initial_keypoint = (predictions_initial_image[:, 1] == keypoint_type).nonzero()
             indices_final_keypoint = (predictions_final_image[:, 1] == keypoint_type).nonzero()
             keypoint_to_matches[keypoint_type] = []
@@ -143,7 +143,7 @@ class KeypointMatcher():
                 distances_initial_to_final_indices = (distances_initial_to_final < epipolar_threshold).nonzero()
                 matches = distances_initial_to_final_indices.size()[0]
                 if matches > 0:
-                    print(f'\t{matches} matches found from original initial {distances_initial_to_final.size()[0]} points and {distances_initial_to_final.size()[1]} final points.')
+                    #print(f'\t{matches} matches found from original initial {distances_initial_to_final.size()[0]} points and {distances_initial_to_final.size()[1]} final points.')
                     for match_index in range(matches):
                         initial_and_final_indices = distances_initial_to_final_indices[match_index]
                         coordinates_initial = scaled_initial_coordinates[:2, [indices_initial_keypoint[initial_and_final_indices[0]]]]
@@ -158,16 +158,17 @@ class KeypointMatcher():
                             predicted_heatmaps, scale)
 
                         epipolar_match = EpipolarMatch(coord_initial, coord_final, distance, probability_initial, probability_final)
-                        print(epipolar_match)
+                        #print(epipolar_match)
                         keypoint_to_matches[keypoint_type].append(epipolar_match)
                 else:
-                    print(f'\tNo matches found')
+                    pass
+                    #print(f'\tNo matches found')
         return keypoint_to_matches
 
     def aggregate_groups(self, keypoint_to_matches_grouped):
         keypoint_to_matches_grouped_aggregated = []
         for groups_in_keypoint in keypoint_to_matches_grouped:
-            print(f'Keypoint {groups_in_keypoint}')
+            #print(f'Keypoint {groups_in_keypoint}')
             groupped_matches = []
             for group in groups_in_keypoint:
                 if(len(group) > 0):
@@ -217,8 +218,9 @@ class KeypointMatcher():
 
         return self.aggregate_groups(keypoint_to_matches_grouped)
 
-
-    def draw_keypoint_matches(self, label, keypoint_to_matches, image_initial, image_final):
+    def draw_keypoint_matches(self, keypoint_to_matches, image_initial_raw, image_final_raw, camera_model):
+        image_initial = camera_model.undistort_image(image_initial_raw)
+        image_final = camera_model.undistort_image(image_final_raw)
         hues = torch.arange(start=0,end=179., step = 179 / (self.config.num_vertices + 1) )
         colors = [Color(hsl=(hue/180, 1, 0.5)).rgb for hue in hues]
         colors = [(int(color[0] * 255), int(color[1] * 255), int(color[2] * 255)) for color in colors]
@@ -231,13 +233,7 @@ class KeypointMatcher():
                 image_initial = cv2.circle(image_initial, (int(match.coord_initial[0]), int(match.coord_initial[1])), 4, color, thickness=2)
                 image_final = cv2.circle(image_final, (int(match.coord_final[0]), int(match.coord_final[1])), 4, color, thickness=2)
 
-
-        cv2.imshow(f'{label} | Point in image 1', image_initial)
-        cv2.namedWindow(f'{label} | Point in image 1')
-        cv2.setMouseCallback(f'{label} | Point in image 1', print_coordinates)
-        cv2.imshow(f'{label} | Epipolar line in second image', image_final)
-        cv2.namedWindow(f'{label} | Epipolar line in second image')
-        cv2.setMouseCallback(f'{label} | Epipolar line in second image', print_coordinates)
+        return image_initial, image_final
 
 class EpipolarMatch():
 
@@ -298,11 +294,11 @@ class Triangularizer():
                         ((final_point[:2] - match.coord_final) ** 2).mean() ) / 2.
 
                     if triangularization_error < triangularization_threshold:
-                        print('IN', keypoint, point, s[3], mean_reprojection_error)
+                        #print('IN', keypoint, point, s[3], mean_reprojection_error)
                         points_predicted_keypoint.append(point)
                     else:
                         pass
-                        print('OUT', keypoint, point, s[3], mean_reprojection_error)
+                        #print('OUT', keypoint, point, s[3], mean_reprojection_error)
             points_predicted.append(points_predicted_keypoint)
         return points_predicted
 
@@ -334,77 +330,129 @@ class Triangularizer():
         cv2.imshow(f'Reprojected | Point in Initial Image', image_initial)
         cv2.imshow(f'Reprojected | Point in Final Image', image_final)
 
+class EndToEndTransformationSolution():
+
+    def __init__(self, solution, image_initial_procrustes, image_final_procrustes, image_initial_grouped, image_final_grouped, heatmap_images):
+        self.solution = solution
+        self.image_initial_procrustes = image_initial_procrustes
+        self.image_final_procrustes = image_final_procrustes
+        self.image_initial_grouped = image_initial_grouped
+        self.image_final_grouped = image_final_grouped
+        self.heatmap_images = heatmap_images
+
+    def __repr__(self):
+        return str(self.__dict__)
+
+class EndToEndTransformationEstimator():
+
+    def __init__(self):
+        self.camera_topology = RobotTopology(l1=142, l2=142, l3=80, h1=50, angle_wide_1=180, angle_wide_2=180 + 90, angle_wide_3=180 + 90)
+        self.inferencer = Inferencer(distort=False, keep_dimensions=True, use_cache=False, \
+            mode='silco', max_background_objects=1, max_foreground_objects=1)
+        supports_folder = 'test/images/'
+        self.supports = self.inferencer.get_supports_from_folder(supports_folder)
+        self.supports = torch.cat([self.supports] * 2 ).cuda()
+
+
+    def compute_transformation(self, initial_state, final_state, image_initial_raw, image_final_raw):
+        height, width = image_final_raw.shape[0], image_final_raw.shape[1]
+        camera_model = CameraModel(width, height)
+        fundamental_matrix_generator = FundamentalMatrixGenerator(camera_model, self.camera_topology)
+
+        fundamental_matrix = fundamental_matrix_generator.generate_fundamental_matrix(initial_state, final_state)
+        epipolar_line_generator = EpipolarLineGenerator(torch.from_numpy(fundamental_matrix))
+
+        image_initial = camera_model.undistort_image(image_initial_raw)
+        image_final = camera_model.undistort_image(image_final_raw)
+
+        # perform inference
+        images = [image_initial, image_final]
+        query = self.inferencer.get_queries_from_opencv_images(images)
+        original_height, original_width = image_final.shape[0], image_final.shape[1] #(480, 640, 3)
+
+
+        query_for_view = query.clone()
+        query = query.cuda()
+        predicted_heatmaps = self.inferencer.get_model_inference(self.supports, query)
+        predicted_heatmaps = predicted_heatmaps.cpu()
+
+        target_height, targe_width = predicted_heatmaps.size()[2], predicted_heatmaps.size()[3] # torch.Size([2, 3, 96, 128])
+        scale = original_width / targe_width
+        #print(f'Original h/w {original_height}, {original_width} => Target h/w {target_height}, {targe_width}. Scales: {original_width / targe_width} | {original_height / target_height}')
+
+        prediction_threshold = 0.1
+
+        predicted_heatmaps = predicted_heatmaps * (predicted_heatmaps > prediction_threshold)
+        heatmap_images = []
+        for idx, image in enumerate(images):
+            visual_targets, visual_predictions, visual_suports = \
+                self.inferencer.display_results(f'Inference {idx}', query_for_view[idx: idx + 1], None, predicted_heatmaps[idx: idx + 1], threshold=0.0)
+            heatmap_images.append((visual_targets, visual_predictions, visual_suports))
+
+
+        keypoint_matcher = KeypointMatcher(epipolar_line_generator)
+        keypoint_to_matches = keypoint_matcher.get_matches_from_predictions(predicted_heatmaps,\
+            scale, prediction_threshold = prediction_threshold, epipolar_threshold = 1.)
+
+        keypoint_to_matches = keypoint_matcher.group_matches(keypoint_to_matches)
+        image_initial_grouped, image_final_grouped = keypoint_matcher.draw_keypoint_matches(keypoint_to_matches, image_initial_raw, image_final_raw, camera_model)
+        triangularizer = Triangularizer(camera_model, self.camera_topology)
+        points_predicted = triangularizer.triangularize(initial_state, final_state, keypoint_to_matches)
+        ### triangularizer.visualize_reprojection(points_predicted, image_initial_raw, image_final_raw, initial_state, final_state)
+
+        procrustes_problem_solver = ProcrustesProblemSolver()
+        solution = procrustes_problem_solver.solve(points_predicted)
+        if solution is not None:
+            image_initial_procrustes, image_final_procrustes = procrustes_problem_solver.visualize(solution,
+                self.camera_topology, initial_state, final_state, image_initial_raw, image_final_raw)
+            return EndToEndTransformationSolution(solution, image_initial_procrustes,
+                image_final_procrustes, image_initial_grouped, image_final_grouped, heatmap_images)
+        else:
+            return EndToEndTransformationSolution(None, None, None, None, None, heatmap_images)
+
 
 def test():
     config = Config()
-
     image_initial_path = '/home/rusalka/Pictures/Webcam/first.jpg'
     image_final_path = '/home/rusalka/Pictures/Webcam/second.jpg'
     image_initial_raw = config.get_image_from_path(image_initial_path)
     image_final_raw = config.get_image_from_path(image_final_path)
-    height, width = image_final_raw.shape[0], image_final_raw.shape[1]
-
-    camera_topology = RobotTopology(l1=142, l2=142, l3=80, h1=50, angle_wide_1=180, angle_wide_2=180 + 90, angle_wide_3=180 + 90)
-
     initial_state = RobotState(linear_1=5, angle_1=to_radians(0.), angle_2=to_radians(70.), angle_3=to_radians(-20.))
     final_state   = RobotState(linear_1=5, angle_1=to_radians(0.), angle_2=to_radians(-90.), angle_3=to_radians(20.))
+    end_to_end_transformation_estimator = EndToEndTransformationEstimator()
+    solution, image_initial_procrustes, image_final_procrustes, image_initial_grouped, image_final_grouped, heatmap_images = \
+        end_to_end_transformation_estimator.compute_transformation(initial_state, final_state, image_initial_raw, image_final_raw)
+    if solution is not None:
+        print("".join(['-'] * 40))
+        print('Solution')
+        print(solution)
+        visual_targets_initial, visual_predictions_initial, visual_suports_initial = heatmap_images[0]
+        visual_targets_final, visual_predictions_final, visual_suports_final = heatmap_images[1]
+        if visual_targets_initial is not None:
+            cv2.imshow(f'Targets | Image 1', visual_targets_initial)
+        if visual_predictions_initial is not None:
+            cv2.imshow(f'Heatmap Predictions | Image 1', visual_predictions_initial)
+        if visual_suports_initial is not None:
+            cv2.imshow(f'Supports | Image 1', visual_suports_initial)
+        if visual_targets_final is not None:
+            cv2.imshow(f'Targets | Image 2', visual_targets_final)
+        if visual_predictions_final is not None:
+            cv2.imshow(f'Heatmap Predictions | Image 2', visual_predictions_final)
+        if visual_suports_final is not None:
+            cv2.imshow(f'Supports | Image 2', visual_suports_final)
 
-    camera_model = CameraModel(width, height)
-    fundamental_matrix_generator = FundamentalMatrixGenerator(camera_model, camera_topology)
-    fundamental_matrix = fundamental_matrix_generator.generate_fundamental_matrix(initial_state, final_state)
-    epipolar_line_generator = EpipolarLineGenerator(torch.from_numpy(fundamental_matrix))
+        # Grouped
+        cv2.imshow(f'Grouped | Point in image 1', image_initial_grouped)
+        cv2.namedWindow(f'Grouped | Point in image 1')
+        cv2.setMouseCallback(f'Grouped | Point in image 1', print_coordinates)
+        cv2.imshow(f'Grouped | Epipolar line in second image', image_final_grouped)
+        cv2.namedWindow(f'Grouped | Epipolar line in second image')
+        cv2.setMouseCallback(f'Grouped | Epipolar line in second image', print_coordinates)
+        # Final solution
+        cv2.imshow(f'Transfomation Predicted | Point in Initial Image', image_initial_procrustes)
+        cv2.imshow(f'Transfomation Predicted | Point in Final Image', image_final_procrustes)
 
-    image_initial = camera_model.undistort_image(image_initial_raw)
-    image_final = camera_model.undistort_image(image_final_raw)
-
-    # perform inference
-    inferencer = Inferencer(distort=False, keep_dimensions=True, use_cache=False, \
-        mode='silco', max_background_objects=1, max_foreground_objects=1)
-    supports_folder = 'test/images/'
-    supports = inferencer.get_supports_from_folder(supports_folder)
-    images = [image_initial, image_final]
-    supports = torch.cat([supports] * len(images) )
-    query = inferencer.get_queries_from_opencv_images(images)
-    original_height, original_width = image_final.shape[0], image_final.shape[1] #(480, 640, 3)
-
-
-    visualize_query = query.clone()
-    predicted_heatmaps = inferencer.get_model_inference(supports, query)
-    target_height, targe_width = predicted_heatmaps.size()[2], predicted_heatmaps.size()[3] # torch.Size([2, 3, 96, 128])
-    scale = original_width / targe_width
-    #print(f'Original h/w {original_height}, {original_width} => Target h/w {target_height}, {targe_width}. Scales: {original_width / targe_width} | {original_height / target_height}')
-
-    prediction_threshold = 0.1
-    keypoint_matcher = KeypointMatcher(epipolar_line_generator)
-    keypoint_to_matches = keypoint_matcher.get_matches_from_predictions(predicted_heatmaps,\
-        scale, prediction_threshold = prediction_threshold, epipolar_threshold = 1.)
-
-    #for keypoint in keypoint_to_matches:
-    #    print(f'{keypoint} has the following amount of matches {len(keypoint_to_matches[keypoint])}')
-    keypoint_matcher.draw_keypoint_matches('Initial', keypoint_to_matches, image_initial, image_final)
-    keypoint_to_matches = keypoint_matcher.group_matches(keypoint_to_matches)
-
-    keypoint_matcher = KeypointMatcher(epipolar_line_generator)
-
-    image_initial = camera_model.undistort_image(image_initial_raw)
-    image_final = camera_model.undistort_image(image_final_raw)
-    #for keypoint in keypoint_to_matches:
-    #    print(f'{keypoint} has the following grouped amount of matches {len(keypoint_to_matches[keypoint])}')
-    keypoint_matcher.draw_keypoint_matches('Initial Grouped', keypoint_to_matches, image_initial, image_final)
-
-    triangularizer = Triangularizer(camera_model, camera_topology)
-    points_predicted = triangularizer.triangularize(initial_state, final_state, keypoint_to_matches)
-    triangularizer.visualize_reprojection(points_predicted, image_initial_raw, image_final_raw, initial_state, final_state)
-
-    procrustes_problem_solver = ProcrustesProblemSolver()
-    solution = procrustes_problem_solver.solve(points_predicted)
-    procrustes_problem_solver.visualize(solution, camera_topology, initial_state, final_state, image_initial_raw, image_final_raw)
-
-    predicted_heatmaps = predicted_heatmaps * (predicted_heatmaps > prediction_threshold)
-    for idx, image in enumerate(images):
-        inferencer.display_results(f'Inference {idx}', visualize_query[idx: idx + 1], None, predicted_heatmaps[idx: idx + 1], threshold=0.0)
-
-    cv2.waitKey(0)
+    cv2.waitKey()
 
 if __name__ == '__main__':
     test()
