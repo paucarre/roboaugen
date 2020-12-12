@@ -12,6 +12,9 @@ import numpy as np
 import cv2
 import torch
 from colour import Color
+import json
+import click
+import os
 
 class FundamentalMatrixGenerator():
 
@@ -197,7 +200,7 @@ class KeypointMatcher():
         point_distances = point_distances.reshape(points.shape[0], points.shape[0])
         return point_distances
 
-    def group_matches(self, keypoint_to_matches, grouping_distance_threshold = 15.):
+    def group_matches(self, keypoint_to_matches, grouping_distance_threshold = 10.):
         keypoint_to_matches_grouped = []
         for keypoint in keypoint_to_matches:
             matches_grouped = []
@@ -259,7 +262,7 @@ class Triangularizer():
         self.camera_matrix[1, 2] *= 0.74
         self.forward_kinematics = RobotForwardKinematics(camera_robot_topology)
 
-    def triangularize(self, initial_state, final_state, keypoint_to_matches, triangularization_threshold=10.):
+    def triangularize(self, initial_state, final_state, keypoint_to_matches, triangularization_threshold=15.):
         initial_transformation = self.forward_kinematics.get_transformation(initial_state)
         final_transformation = self.forward_kinematics.get_transformation(final_state)
         initial_projection_matrix = self.camera_matrix @ np.linalg.inv(initial_transformation)[:3,:]
@@ -332,16 +335,25 @@ class Triangularizer():
 
 class EndToEndTransformationSolution():
 
-    def __init__(self, solution, image_initial_procrustes, image_final_procrustes, image_initial_grouped, image_final_grouped, heatmap_images):
+    def __init__(self, solution, image_initial_procrustes, image_final_procrustes, image_initial_ungrouped, image_final_ungrouped,
+        image_initial_grouped, image_final_grouped, heatmap_images):
         self.solution = solution
         self.image_initial_procrustes = image_initial_procrustes
         self.image_final_procrustes = image_final_procrustes
         self.image_initial_grouped = image_initial_grouped
         self.image_final_grouped = image_final_grouped
         self.heatmap_images = heatmap_images
+        self.image_initial_ungrouped = image_initial_ungrouped
+        self.image_final_ungrouped = image_final_ungrouped
 
     def __repr__(self):
         return str(self.__dict__)
+
+    def to_json(self):
+        if self.solution is not None:
+            return json.dumps(self.solution.__dict__, indent = 4)
+        else:
+            return ""
 
 class EndToEndTransformationEstimator():
 
@@ -354,7 +366,7 @@ class EndToEndTransformationEstimator():
         self.supports = torch.cat([self.supports] * 2 ).cuda()
 
 
-    def compute_transformation(self, initial_state, final_state, image_initial_raw, image_final_raw):
+    def compute_transformation(self, initial_state, final_state, image_initial_raw, image_final_raw, prediction_threshold = 0.1):
         height, width = image_final_raw.shape[0], image_final_raw.shape[1]
         camera_model = CameraModel(width, height)
         fundamental_matrix_generator = FundamentalMatrixGenerator(camera_model, self.camera_topology)
@@ -380,7 +392,6 @@ class EndToEndTransformationEstimator():
         scale = original_width / targe_width
         #print(f'Original h/w {original_height}, {original_width} => Target h/w {target_height}, {targe_width}. Scales: {original_width / targe_width} | {original_height / target_height}')
 
-        prediction_threshold = 0.1
 
         predicted_heatmaps = predicted_heatmaps * (predicted_heatmaps > prediction_threshold)
         heatmap_images = []
@@ -393,7 +404,7 @@ class EndToEndTransformationEstimator():
         keypoint_matcher = KeypointMatcher(epipolar_line_generator)
         keypoint_to_matches = keypoint_matcher.get_matches_from_predictions(predicted_heatmaps,\
             scale, prediction_threshold = prediction_threshold, epipolar_threshold = 1.)
-
+        image_initial_ungrouped, image_final_ungrouped = keypoint_matcher.draw_keypoint_matches(keypoint_to_matches, image_initial_raw, image_final_raw, camera_model)
         keypoint_to_matches = keypoint_matcher.group_matches(keypoint_to_matches)
         image_initial_grouped, image_final_grouped = keypoint_matcher.draw_keypoint_matches(keypoint_to_matches, image_initial_raw, image_final_raw, camera_model)
         triangularizer = Triangularizer(camera_model, self.camera_topology)
@@ -406,27 +417,41 @@ class EndToEndTransformationEstimator():
             image_initial_procrustes, image_final_procrustes = procrustes_problem_solver.visualize(solution,
                 self.camera_topology, initial_state, final_state, image_initial_raw, image_final_raw)
             return EndToEndTransformationSolution(solution, image_initial_procrustes,
-                image_final_procrustes, image_initial_grouped, image_final_grouped, heatmap_images)
+                image_final_procrustes, image_initial_ungrouped, image_final_ungrouped,
+                image_initial_grouped, image_final_grouped, heatmap_images)
         else:
-            return EndToEndTransformationSolution(None, None, None, None, None, heatmap_images)
+            return EndToEndTransformationSolution(None, None,
+                None, image_initial_ungrouped, image_final_ungrouped,
+                image_initial_grouped, image_final_grouped, heatmap_images)
 
 
-def test():
+@click.command()
+@click.option("--log_idx", default=0, help="Log folder index")
+@click.option("--threshold", default=0.1, help="Prediction heatmap threshold")
+def triangularize(log_idx, threshold):
     config = Config()
-    image_initial_path = '/home/rusalka/Pictures/Webcam/first.jpg'
-    image_final_path = '/home/rusalka/Pictures/Webcam/second.jpg'
-    image_initial_raw = config.get_image_from_path(image_initial_path)
-    image_final_raw = config.get_image_from_path(image_final_path)
-    initial_state = RobotState(linear_1=5, angle_1=to_radians(0.), angle_2=to_radians(70.), angle_3=to_radians(-20.))
-    final_state   = RobotState(linear_1=5, angle_1=to_radians(0.), angle_2=to_radians(-90.), angle_3=to_radians(20.))
-    end_to_end_transformation_estimator = EndToEndTransformationEstimator()
-    end_to_end_solution = \
-        end_to_end_transformation_estimator.compute_transformation(initial_state, final_state, image_initial_raw, image_final_raw)
-    solution = end_to_end_solution.solution
-    if solution is not None:
-        print("".join(['-'] * 40))
-        print('Solution')
-        print(solution)
+    #image_initial_path = '/home/rusalka/Pictures/Webcam/first.jpg'
+    #image_final_path = '/home/rusalka/Pictures/Webcam/second.jpg'
+    data_log_dir = f'data/log/{log_idx}'
+    if os.path.exists(data_log_dir):
+        print(f'\tTriangualizing from {data_log_dir}')
+        image_initial_path = f'{data_log_dir}/image_initial.jpg'
+        image_final_path = f'{data_log_dir}/image_final.jpg'
+        image_initial_raw = config.get_image_from_path(image_initial_path)
+        image_final_raw = config.get_image_from_path(image_final_path)
+        initial_state_data = None
+        final_state_data = None
+        with open( f'{data_log_dir}/initial_state.json') as json_file:
+            initial_state_data = json.load(json_file)
+        with open( f'{data_log_dir}/final_state.json') as json_file:
+            final_state_data = json.load(json_file)
+        final_state = RobotState(linear_1=initial_state_data['linear_1'],
+            angle_1=initial_state_data['angle_1'], angle_2=initial_state_data['angle_2'], angle_3=initial_state_data['angle_3'])
+        initial_state = RobotState(linear_1=final_state_data['linear_1'],
+            angle_1=final_state_data['angle_1'], angle_2=final_state_data['angle_2'], angle_3=final_state_data['angle_3'])
+        end_to_end_transformation_estimator = EndToEndTransformationEstimator()
+        end_to_end_solution = \
+            end_to_end_transformation_estimator.compute_transformation(initial_state, final_state, image_initial_raw, image_final_raw, threshold)
         visual_targets_initial, visual_predictions_initial, visual_suports_initial = end_to_end_solution.heatmap_images[0]
         visual_targets_final, visual_predictions_final, visual_suports_final = end_to_end_solution.heatmap_images[1]
         if visual_targets_initial is not None:
@@ -442,18 +467,36 @@ def test():
         if visual_suports_final is not None:
             cv2.imshow(f'Supports | Image 2', visual_suports_final)
 
-        # Grouped
+        cv2.imshow(f'UnGrouped | Point in image 1', end_to_end_solution.image_initial_ungrouped)
+        cv2.namedWindow(f'UnGrouped | Point in image 1')
+        cv2.setMouseCallback(f'UnGrouped | Point in image 1', print_coordinates)
+        cv2.imshow(f'UnGrouped | Epipolar line in second image', end_to_end_solution.image_final_ungrouped)
+        cv2.namedWindow(f'UnGrouped | Epipolar line in second image')
+        cv2.setMouseCallback(f'UnGrouped | Epipolar line in second image', print_coordinates)
+
         cv2.imshow(f'Grouped | Point in image 1', end_to_end_solution.image_initial_grouped)
         cv2.namedWindow(f'Grouped | Point in image 1')
         cv2.setMouseCallback(f'Grouped | Point in image 1', print_coordinates)
         cv2.imshow(f'Grouped | Epipolar line in second image', end_to_end_solution.image_final_grouped)
         cv2.namedWindow(f'Grouped | Epipolar line in second image')
         cv2.setMouseCallback(f'Grouped | Epipolar line in second image', print_coordinates)
-        # Final solution
-        cv2.imshow(f'Transfomation Predicted | Point in Initial Image', end_to_end_solution.image_initial_procrustes)
-        cv2.imshow(f'Transfomation Predicted | Point in Final Image', end_to_end_solution.image_final_procrustes)
+        solution = end_to_end_solution.solution
+        if solution is not None:
+            print("".join(['-'] * 40))
+            print('Solution')
+            print(solution)
 
-    cv2.waitKey()
+            # Grouped
+
+            # Final solution
+            cv2.imshow(f'Transfomation Predicted | Point in Initial Image', end_to_end_solution.image_initial_procrustes)
+            cv2.imshow(f'Transfomation Predicted | Point in Final Image', end_to_end_solution.image_final_procrustes)
+
+
+        else:
+            print('\tNo Solution found')
+        cv2.waitKey()
+
 
 if __name__ == '__main__':
-    test()
+    triangularize()

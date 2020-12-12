@@ -14,10 +14,10 @@ def encode_double(data):
     data = base64.b64encode(data)
     return data
 
-linear_1=encode_double(5)
-angle_1=encode_double(to_radians(0.))
-angle_2=encode_double(to_radians(70.))
-angle_3=encode_double(to_radians(-20.))
+linear_1 = encode_double(5)
+angle_1  = encode_double(to_radians(0.))
+angle_2  = encode_double(to_radians(70.))
+angle_3  = encode_double(to_radians(-20.))
 state = {
         'linear_1': linear_1,
         'angle_1': angle_1,

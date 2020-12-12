@@ -48,7 +48,7 @@ class Trainer():
   def mse(self, target_heatmaps, predicted_heatmaps, spatial_penalty):
     positives = target_heatmaps > 0.
     negatives = target_heatmaps == 0.
-    error = ((target_heatmaps - predicted_heatmaps) ** 2)
+    error = (target_heatmaps - predicted_heatmaps).abs()
     positive_error = error * positives
     positive_area =  positives.permute(2, 3, 0, 1).view(-1, positives.size()[0], positives.size()[1]).sum(0) + 1
     negative_error = error * negatives
@@ -150,7 +150,7 @@ class Trainer():
         spatial_penalty = F.interpolate(spatial_penalty, size=(self.config.input_width // 2, self.config.input_height // 2), mode='bilinear').cuda(non_blocking=True)
         losses['mse_loss'] = self.mse(target_heatmaps, predicted_heatmaps, spatial_penalty)
         losses['entropy_loss'] = Trainer.entropy(predicted_heatmaps) * 1e-3
-        losses['total_loss'] = losses['mse_loss'] + losses['entropy_loss']#+ losses['spatial_location_entropy_loss'] + losses['feature_entropy_loss']
+        losses['total_loss'] = losses['mse_loss'] #+ losses['entropy_loss']#+ losses['spatial_location_entropy_loss'] + losses['feature_entropy_loss']
         if mode == 'silco' or mode == 'both':
           optimizer_silco.zero_grad()
         if mode == 'keypoints' or mode == 'both':

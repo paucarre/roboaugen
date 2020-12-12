@@ -11,6 +11,7 @@ import logging
 import base64
 import struct
 import json
+import os
 from enum import Enum, auto
 
 from robotcontroller.kinematics import RobotTopology, RobotState
@@ -28,33 +29,19 @@ def to_radians(degrees):
     return ( degrees * np.pi ) / 180.
 
 
-app = Flask(__name__)
+template_dir = os.path.abspath('roboaugen/camera/server/templates')
+static_dir = os.path.abspath('roboaugen/camera/server/static')
+app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
 app.config['SECRET_KEY'] = 'secret!'
 app.config['SESSION_TYPE'] = 'filesystem'
 app.config['TEMPLATES_AUTO_RELOAD'] = True
-socketio = SocketIO(app, async_mode=None)
 
-global task_queue
-global inference_process
-task_queue = None
-inference_process = None
-if task_queue is None:
-    task_queue = Queue()
-if inference_process is None:
-    print("CREATING INFERENCE PROCESS")
-    #robot_communication = get_robot_communication(True)
-    #control_process = control(task_queue, robot_communication)
+socketio = SocketIO(app, async_mode=None)
 
 global end_to_end_transformation_estimator
 end_to_end_transformation_estimator = None
 if end_to_end_transformation_estimator is None:
     end_to_end_transformation_estimator = EndToEndTransformationEstimator()
-
-
-global video_capture
-video_capture  = None
-if video_capture is None:
-    video_capture = cv2.VideoCapture(1)
 
 global initial_state
 initial_state = None
@@ -67,6 +54,39 @@ image_initial_raw = None
 
 global image_final_raw
 image_final_raw = None
+
+global capture_image_task_queue
+capture_image_task_queue = None
+if capture_image_task_queue is None:
+    capture_image_task_queue = Queue()
+
+global capture_image_result_queue
+capture_image_result_queue = None
+if capture_image_result_queue is None:
+    capture_image_result_queue = Queue()
+
+def record_camera():
+    video_capture = cv2.VideoCapture(0)
+    while True:
+        ret, image = video_capture.read()
+        image_capture_requested = False
+        while not capture_image_task_queue.empty():
+            image_capture_requested = True
+            task = capture_image_task_queue.get()
+        if image_capture_requested:
+            capture_image_result_queue.put(image)
+
+
+global video_recording_thread
+video_recording_thread = None
+if video_recording_thread is None:
+    video_recording_thread = Thread(target=record_camera)
+    video_recording_thread.daemon = True
+    video_recording_thread.start()
+
+
+global sample_index
+sample_index = 1
 
 
 def decode_double(data):
@@ -92,17 +112,35 @@ class SolutionResponse():
         self.solution = solution
 
     def to_json_string(self):
-        return json.dumps(self.__dict__, indent = 4)
+        if self.solution is not None:
+            return self.solution.to_json_string()
+        else:
+            return ""
+
+
+#def generated_media():
+
+@socketio.on('connect')
+def test_connect():
+    print('Client connected')
+
+@socketio.on('disconnect')
+def test_disconnect():
+    print('Client disconnected')
 
 @app.route('/message', methods=['POST'])
 def message():
-    global initial_state, final_state, video_capture, end_to_end_transformation_estimator, image_initial_raw, image_final_raw
+    global initial_state, final_state, end_to_end_transformation_estimator, image_initial_raw, image_final_raw, sample_index
     state = request.get_json()
     state = get_state_from_request(state)
     final_state = initial_state
     initial_state = state
     image_final_raw = image_initial_raw
-    ret, image_initial_raw = video_capture.read()
+    capture_image_task_queue.put('RECORD_CAMERA')
+    result_ready = not capture_image_result_queue.empty()
+    while not result_ready:
+        result_ready = not capture_image_result_queue.empty()
+    image_initial_raw = capture_image_result_queue.get()
     if final_state is not None and initial_state is not None:
         logging.basicConfig(
             format='%(asctime)s %(levelname)-8s %(message)s',
@@ -111,17 +149,77 @@ def message():
         config = Config()
         height, width = image_final_raw.shape[0], image_final_raw.shape[1]
         camera_topology = RobotTopology(l1=142, l2=142, l3=80, h1=50, angle_wide_1=180, angle_wide_2=180 + 90, angle_wide_3=180 + 90)
-        solution = end_to_end_transformation_estimator.compute_transformation(initial_state, final_state, image_initial_raw, image_final_raw)
-        if solution.solution is not None:
-            return SolutionResponse(SolutionType.NO_SOLUTION_FOUND, solution.solution).to_json_string(), 200
+
+        image_initial = np.copy(image_initial_raw)
+        image_final = np.copy(image_final_raw)
+        end_to_end_solution = end_to_end_transformation_estimator.compute_transformation(initial_state,
+            final_state, image_initial, image_final, 0.15)
+
+        visual_targets_initial, visual_predictions_initial, visual_suports_initial = end_to_end_solution.heatmap_images[0]
+        visual_targets_final, visual_predictions_final, visual_suports_final = end_to_end_solution.heatmap_images[1]
+
+
+        data_log_dir = f'data/log/{sample_index}'
+        if not os.path.exists(data_log_dir):
+            os.makedirs(data_log_dir)
+        cv2.imwrite(f'{data_log_dir}/image_initial.jpg', image_initial)
+        cv2.imwrite(f'{data_log_dir}/image_final.jpg', image_final)
+        cv2.imwrite(f'{data_log_dir}/visual_predictions_initial.jpg', visual_predictions_initial)
+        cv2.imwrite(f'{data_log_dir}/visual_predictions_final.jpg', visual_predictions_final)
+        if end_to_end_solution.image_initial_procrustes is not None:
+            cv2.imwrite(f'{data_log_dir}/image_initial_procrustes.jpg', end_to_end_solution.image_initial_procrustes )
+        if end_to_end_solution.image_final_procrustes is not None:
+            cv2.imwrite(f'{data_log_dir}/image_final_procrustes.jpg', end_to_end_solution.image_final_procrustes )
+        if end_to_end_solution.image_initial_grouped is not None:
+            cv2.imwrite(f'{data_log_dir}/image_initial_grouped.jpg', end_to_end_solution.image_initial_grouped )
+        if end_to_end_solution.image_final_grouped is not None:
+            cv2.imwrite(f'{data_log_dir}/image_final_grouped.jpg', end_to_end_solution.image_final_grouped )
+        if end_to_end_solution.image_initial_ungrouped is not None:
+            cv2.imwrite(f'{data_log_dir}/image_initial_ungrouped.jpg', end_to_end_solution.image_initial_ungrouped )
+        if end_to_end_solution.image_final_ungrouped is not None:
+            cv2.imwrite(f'{data_log_dir}/image_final_ungrouped.jpg', end_to_end_solution.image_final_ungrouped )
+        with open(f'{data_log_dir}/initial_state.json', 'w') as outfile:
+            json.dump(initial_state.__dict__, outfile)
+        with open(f'{data_log_dir}/final_state.json', 'w') as outfile:
+            json.dump(final_state.__dict__, outfile)
+
+        sample_index = sample_index + 1
+
+
+        visual_predictions_initial = base64.b64encode(cv2.imencode('.jpg', visual_predictions_initial)[1]).decode("utf-8")
+        visual_predictions_final = base64.b64encode(cv2.imencode('.jpg', visual_predictions_final)[1]).decode("utf-8")
+        image_initial_procrustes = base64.b64encode(cv2.imencode('.jpg', end_to_end_solution.image_initial_procrustes)[1]).decode("utf-8") \
+            if end_to_end_solution.image_initial_procrustes is not None else ""
+        image_final_procrustes = base64.b64encode(cv2.imencode('.jpg', end_to_end_solution.image_final_procrustes)[1]).decode("utf-8") \
+            if end_to_end_solution.image_final_procrustes is not None else ""
+        image_initial_grouped = base64.b64encode(cv2.imencode('.jpg', end_to_end_solution.image_initial_grouped)[1]).decode("utf-8") \
+            if end_to_end_solution.image_initial_grouped is not None else ""
+        image_final_grouped = base64.b64encode(cv2.imencode('.jpg', end_to_end_solution.image_final_grouped)[1]).decode("utf-8") \
+            if end_to_end_solution.image_final_grouped is not None else ""
+
+
+
+
+        data = {
+            'visual_predictions_initial': visual_predictions_initial,
+            'visual_predictions_final': visual_predictions_final,
+            'image_initial_procrustes': image_initial_procrustes,
+            'image_final_procrustes': image_final_procrustes,
+            'image_initial_grouped': image_initial_grouped,
+            'image_final_grouped': image_final_grouped
+        }
+        socketio.emit('camera_updated', data)
+
+        if end_to_end_solution.solution is not None:
+            return SolutionResponse(SolutionType.NO_SOLUTION_FOUND, end_to_end_solution.solution).to_json_string(), 200
         else:
             return SolutionResponse(SolutionType.NO_SOLUTION_FOUND).to_json_string(), 404
     #task_queue.put(message)
     return SolutionResponse(SolutionType.NOT_ENOUGH_STATES).to_json_string(), 404
 
-@app.route('/', methods=['GET'])
+@app.route('/')
 def index():
-    return 'OK', 200
+    return render_template('index.html', async_mode=socketio.async_mode)
 
 if __name__ == '__main__':
     socketio = SocketIO(app, async_mode=None)

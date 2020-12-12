@@ -26,3 +26,4 @@ dependencies:
     - opencv-python==4.4.0.46
     - torch-optimizer
     - modern_robotics==1.1.0
+    - gevent-websocket==0.10.1 # NECESSARY FOR SOCKET IO TO WORK!

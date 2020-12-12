@@ -92,6 +92,8 @@ class Inferencer():
     return queries
 
   def get_model_inference(self, supports, query):
+    supports = supports.cuda()
+    query = query.cuda()
     query_features, support_features = Silco.backbone_features(self.backbone, query, supports)
     if self.mode == 'silco':
       query_features, spatial_classifier, feature_classifier, spatial_supports = self.silco(query_features, support_features)
@@ -107,16 +109,16 @@ class Inferencer():
     if target_heatmap is not None:
       targets = self.display_heatmap('Targets', visualize_query, target_heatmap, threshold)
       spatial_penalty = self.display_heatmap('Spatial Penalty', visualize_query, spatial_penalty, threshold)
-      images = np.hstack((targets, spatial_penalty, predictions))
+      images = np.hstack((targets, spatial_penalty, visual_predictions))
       visual_targets = images
+      cv2.imshow(f'{label} - Targets - Spatial Penalty - Predictions', images)
     if visualize_suports is not None:
       visual_suports = visualize_suports.squeeze(0)
       visual_suports = [Inferencer.to_numpy_image(visual_suports[sample_idx]) for sample_idx in range(visual_suports.size()[0])]
       visual_suports = np.hstack(visual_suports)
 
-      #cv2.imshow(f'{label} Supports', visual_suports)
-      #cv2.imshow(f'{label} - Targets - Spatial Penalty - Predictions', images)
-      #cv2.imshow(f'{label} Predictions', predictions)
+      cv2.imshow(f'{label} Supports', visual_suports)
+      cv2.imshow(f'{label} Predictions', visual_predictions)
     return visual_targets, visual_predictions, visual_suports
 
 @click.command()
@@ -125,7 +127,7 @@ class Inferencer():
 @click.option("--keep_dimensions", default=True, help="Keep original image dimensions.")
 @click.option("--use_cache", default=False, help="Use image cache.")
 @click.option("--file", default='', help="Path to image file.")
-@click.option("--threshold", default=0.05, help="Positive threshold.")
+@click.option("--threshold", default=0.1, help="Positive threshold.")
 @click.option("--supports", default='', help="Path to support images.")
 @click.option("--heatmap", default=False, help="Display heatmap without image.")
 @click.option("--mode", default='keypoints', help="Training mode: keypoints, silco.")

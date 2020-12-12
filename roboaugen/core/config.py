@@ -8,6 +8,7 @@ import logging
 import torch
 import shutil
 import numpy as np
+import random
 
 class Config():
 
@@ -106,21 +107,11 @@ class Config():
   def sample_dir(self, object_type, sample_id):
     return f"{self.project_root}/data/train/{object_type}/{sample_id}"
 
-  def get_image_sample(self, object_type, sample_id):
-    folder = f'{self.sample_dir(object_type, sample_id)}/'
-    image = self.get_image_from_path(f'{folder}data.png')
-    if image is None:
-      self.logger.error(f'Error loading image file in folder: {folder}')
-      try:
-        if os.path.exists(folder):
-          shutil.rmtree(folder)
-      except:
-        traceback.print_exc()
-    return image
-
-  def get_background_sample(self, background_id):
+  def get_background_sample(self, background_id=None):
     folder = f'{self.backgrounds_dir}/'
     background_ids = os.listdir(f'{self.backgrounds_dir}')
+    if background_id is not None:
+      background_id = random.choice(range(len(background_ids)))
     background_id = background_ids[background_id % len(background_ids)]
     image = self.get_image_from_path(f'{folder}{background_id}')
     if image is None:

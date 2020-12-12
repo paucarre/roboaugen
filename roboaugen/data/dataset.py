@@ -176,13 +176,21 @@ class ProjectedMeshDataset(Dataset):
                         self.logger.error(traceback.format_exc())
 
     def get_supports(self, index, object_type):
-        supports = self.get_objects(index, [object_type] *  self.config.supports)
-        supports = [self.config.get_image_sample(support.object_type, support.sample_id) for support in supports]
-        supports = [self.image_to_torch(support) for support in supports]
-        if self.distort:
-            supports = [self.distort_image(support) for support in supports]
-        supports = torch.cat([support.unsqueeze(0) for support in supports], 0)
-        return supports
+        supports = []
+        for support_id in range(self.config.supports):
+            object_types =  [object_type]
+            object_index = random.choice(range(len(self.object_type_to_ids[object_type])))
+            objects_background = self.get_objects(object_index, object_types)
+            object_alphas_background, object_images_background = self.get_images_and_alpha_from_objects(objects_background)
+            support = self.image_to_torch(self.config.get_background_sample(index))
+            if object_images_background is not None:
+                for idx, object_image_background in enumerate(object_images_background):
+                    support = support * (1.0 - object_alphas_background[idx])
+                    support += (object_alphas_background[idx] * object_image_background)
+                if self.distort:
+                    support = self.distort_image(support)
+                supports.append(support.unsqueeze(0))
+        return torch.cat(supports, 0)
 
     def generate_target(self, data, std):
         return self.target_generator.generate_target(data['projected_visible_vertices'], data['resolution'][1], data['resolution'][0], std)
@@ -220,7 +228,8 @@ class ProjectedMeshDataset(Dataset):
         sample = None
         support_ids = None
         object_to_detect = None
-        if self.use_cache and torch.rand(1).item() < 0.99:
+        object_type = None
+        if self.use_cache and torch.rand(1).item() < 0.95:
             object_type = random.choice(\
                     list([object_type for object_type in self.object_type_to_ids.keys()]))
             sample = self.load_from_cache(object_type, index)
@@ -244,6 +253,7 @@ class ProjectedMeshDataset(Dataset):
 
                 # There will always be supports => TODO: actually during only keypoint training/inference there are no supports!!
                 supports = self.get_supports(index, object_type)
+                #print(supports.size())
 
                 # Add image, if applicable
                 object_to_detect = self.get_objects(index, [object_type])[0]

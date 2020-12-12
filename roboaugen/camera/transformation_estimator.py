@@ -11,6 +11,7 @@ import cv2
 import torch
 from colour import Color
 from scipy.linalg import svd
+import json
 
 '''
 Coordinate basis for Model (same as robot)
@@ -34,8 +35,8 @@ class ProcrustesTripletSolution():
     def __init__(self, solution_type, points=[], keypoint_indices=[], rotation=None, translation=None):
         self.solution_type = solution_type
         self.points = points
-        self.rotation=rotation
-        self.translation=translation
+        self.rotation = rotation
+        self.translation = translation
         self.keypoint_indices = keypoint_indices
 
     def get_transformation(self):
@@ -69,6 +70,17 @@ class ProcrustesTripletSolution():
 
     def __repr__(self):
         return str(self.__dict__)
+
+    def to_json_string(self):
+        angle_x, angle_y, angle_z = self.get_degree_rotations_around_axis()
+        data = {
+            'rotation': self.rotation.tolist(),
+            'translation': self.translation.tolist(),
+            'angle_x': angle_x,
+            'angle_x': angle_y,
+            'angle_x': angle_z
+        }
+        return json.dumps(data,  indent = 4)
 
 class ProcrustesSolution():
 
