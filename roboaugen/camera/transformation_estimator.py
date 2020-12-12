@@ -77,8 +77,8 @@ class ProcrustesTripletSolution():
             'rotation': self.rotation.tolist(),
             'translation': self.translation.tolist(),
             'angle_x': angle_x,
-            'angle_x': angle_y,
-            'angle_x': angle_z
+            'angle_y': angle_y,
+            'angle_z': angle_z
         }
         return json.dumps(data,  indent = 4)
 

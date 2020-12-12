@@ -115,7 +115,7 @@ class SolutionResponse():
         if self.solution is not None:
             return self.solution.to_json_string()
         else:
-            return ""
+            return "{}"
 
 
 #def generated_media():
@@ -152,8 +152,9 @@ def message():
 
         image_initial = np.copy(image_initial_raw)
         image_final = np.copy(image_final_raw)
+        threshold = 0.1
         end_to_end_solution = end_to_end_transformation_estimator.compute_transformation(initial_state,
-            final_state, image_initial, image_final, 0.15)
+            final_state, image_initial, image_final, threshold)
 
         visual_targets_initial, visual_predictions_initial, visual_suports_initial = end_to_end_solution.heatmap_images[0]
         visual_targets_final, visual_predictions_final, visual_suports_final = end_to_end_solution.heatmap_images[1]

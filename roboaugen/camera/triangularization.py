@@ -445,9 +445,9 @@ def triangularize(log_idx, threshold):
             initial_state_data = json.load(json_file)
         with open( f'{data_log_dir}/final_state.json') as json_file:
             final_state_data = json.load(json_file)
-        final_state = RobotState(linear_1=initial_state_data['linear_1'],
+        initial_state = RobotState(linear_1=initial_state_data['linear_1'],
             angle_1=initial_state_data['angle_1'], angle_2=initial_state_data['angle_2'], angle_3=initial_state_data['angle_3'])
-        initial_state = RobotState(linear_1=final_state_data['linear_1'],
+        final_state = RobotState(linear_1=final_state_data['linear_1'],
             angle_1=final_state_data['angle_1'], angle_2=final_state_data['angle_2'], angle_3=final_state_data['angle_3'])
         end_to_end_transformation_estimator = EndToEndTransformationEstimator()
         end_to_end_solution = \
