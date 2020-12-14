@@ -44,8 +44,8 @@ class Trainer():
       spatial_classifiers_entropy += classifiers_entropy
     classifiers_entropy /= len(classifiers)
     return classifiers_entropy
-
-  def mse(self, target_heatmaps, predicted_heatmaps, spatial_penalty):
+  '''
+  def compute_loss(self, target_heatmaps, predicted_heatmaps, spatial_penalty):
     positives = target_heatmaps > 0.
     negatives = target_heatmaps == 0.
     error = (target_heatmaps - predicted_heatmaps).abs()
@@ -61,6 +61,17 @@ class Trainer():
 
     error_normalized = (mean_positive_error + mean_negative_error) / 2.
     return error_normalized.mean()
+  '''
+
+  def compute_loss(self, target_heatmaps, predicted_heatmaps, spatial_penalty):
+    # false negatives
+    target_indicator = (target_heatmaps > 0.01).double().data
+    false_negative_loss = ((target_heatmaps * target_indicator) - (predicted_heatmaps * target_indicator)).abs().sum() / (target_indicator.sum() + 1.)
+
+    prediction_indicator = (predicted_heatmaps > 0.01).double().data
+    false_positive_loss = ((target_heatmaps * prediction_indicator) - (predicted_heatmaps * prediction_indicator)).abs().sum() / (prediction_indicator.sum() + 1.)
+
+    return false_negative_loss, false_positive_loss
 
   def save_train_state(self, epoch, current_iteration, optimizer_higher_resolution, optimizer_silco):
     torch.save({
@@ -89,8 +100,10 @@ class Trainer():
   def log(self, current_iteration, losses):
     #self.logger.info(f'Epoch {epoch + 1}/{epochs} | Batch {batch_index + 1}/{batches}')
     self.roboaugen_writer.add_scalar('Training Loss', losses['total_loss'], current_iteration )
-    self.roboaugen_writer.add_scalar('MSE Loss', losses['mse_loss'], current_iteration )
+    #self.roboaugen_writer.add_scalar('MSE Loss', losses['mse_loss'], current_iteration )
     self.roboaugen_writer.add_scalar('Entropy Loss', losses['entropy_loss'], current_iteration )
+    self.roboaugen_writer.add_scalar('False Positive Loss', losses['false_positive_loss'], current_iteration )
+    self.roboaugen_writer.add_scalar('False Negative Loss', losses['false_negative_loss'], current_iteration )
     #self.roboaugen_writer.add_scalar('Spatial Entropy Loss', losses['spatial_location_entropy_loss'], current_iteration )
     #self.roboaugen_writer.add_scalar('Feature Entropy Loss', losses['feature_entropy_loss'], current_iteration )
 
@@ -148,9 +161,11 @@ class Trainer():
         predicted_heatmaps = self.higher_resolution(query_features) #updated_query_features)
         target_heatmaps = F.interpolate(target_heatmaps, size=(self.config.input_width // 2, self.config.input_height // 2), mode='bilinear').cuda(non_blocking=True)
         spatial_penalty = F.interpolate(spatial_penalty, size=(self.config.input_width // 2, self.config.input_height // 2), mode='bilinear').cuda(non_blocking=True)
-        losses['mse_loss'] = self.mse(target_heatmaps, predicted_heatmaps, spatial_penalty)
+        false_negative_loss, false_positive_loss = self.compute_loss(target_heatmaps, predicted_heatmaps, spatial_penalty)
+        losses['false_negative_loss'] = false_negative_loss
+        losses['false_positive_loss'] = false_positive_loss
         losses['entropy_loss'] = Trainer.entropy(predicted_heatmaps) * 1e-3
-        losses['total_loss'] = losses['mse_loss'] #+ losses['entropy_loss']#+ losses['spatial_location_entropy_loss'] + losses['feature_entropy_loss']
+        losses['total_loss'] = false_negative_loss + false_positive_loss
         if mode == 'silco' or mode == 'both':
           optimizer_silco.zero_grad()
         if mode == 'keypoints' or mode == 'both':
