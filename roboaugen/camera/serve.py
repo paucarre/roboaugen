@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 import logging
 import base64
-import struct
+
 import json
 import os
 from enum import Enum, auto
@@ -89,17 +89,7 @@ global sample_index
 sample_index = 1
 
 
-def decode_double(data):
-    data = base64.b64decode(data)
-    data = struct.unpack("d", data)[0]
-    return data
 
-def get_state_from_request(request_json):
-    linear_1 = decode_double(request_json['linear_1'])
-    angle_1 = decode_double(request_json['angle_1'])
-    angle_2 = decode_double(request_json['angle_2'])
-    angle_3 = decode_double(request_json['angle_3'])
-    return RobotState(linear_1=linear_1, angle_1=angle_1, angle_2=angle_2, angle_3=angle_3)
 
 class SolutionType():
     SOLUTION_FOUND = 'SOLUTION_FOUND'
@@ -132,7 +122,8 @@ def test_disconnect():
 def message():
     global initial_state, final_state, end_to_end_transformation_estimator, image_initial_raw, image_final_raw, sample_index
     state = request.get_json()
-    state = get_state_from_request(state)
+    state = RobotState.from_dictionary(state)
+    print(state.__dict__)
     final_state = initial_state
     initial_state = state
     image_final_raw = image_initial_raw
@@ -148,11 +139,11 @@ def message():
             datefmt='%Y-%m-%d %H:%M:%S')
         config = Config()
         height, width = image_final_raw.shape[0], image_final_raw.shape[1]
-        camera_topology = RobotTopology(l1=142, l2=142, l3=80, h1=50, angle_wide_1=180, angle_wide_2=180 + 90, angle_wide_3=180 + 90)
 
         image_initial = np.copy(image_initial_raw)
         image_final = np.copy(image_final_raw)
         threshold = 0.1
+        epipolar_threshold = 10
         end_to_end_solution = end_to_end_transformation_estimator.compute_transformation(initial_state,
             final_state, image_initial, image_final, threshold)
 

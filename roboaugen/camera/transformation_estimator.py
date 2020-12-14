@@ -224,7 +224,7 @@ class ProcrustesProblemSolver():
         else:
             return solution
 
-    def visualize(self, solution, camera_topology, initial_state, final_state, image_initial_raw, image_final_raw):
+    def visualize(self, solution, robot_topology, camera_holder_transformation, initial_state, final_state, image_initial_raw, image_final_raw):
         height, width = image_final_raw.shape[0], image_final_raw.shape[1]
         camera_model = CameraModel(width, height)
         config = Config()
@@ -243,9 +243,9 @@ class ProcrustesProblemSolver():
             # This is to be fixed recalibrating properly the camera
             camera_matrix[0, 1] *= 0.74
             camera_matrix[1, 2] *= 0.74
-            forward_kinematics = RobotForwardKinematics(camera_topology)
-            initial_transformation = forward_kinematics.get_transformation(initial_state)
-            final_transformation = forward_kinematics.get_transformation(final_state)
+            forward_kinematics = RobotForwardKinematics(robot_topology)
+            initial_transformation = forward_kinematics.get_transformation(initial_state) @ camera_holder_transformation
+            final_transformation = forward_kinematics.get_transformation(final_state) @ camera_holder_transformation
             initial_projection_matrix = camera_matrix @ np.linalg.inv(initial_transformation)[:3,:]
             initial_poits = initial_projection_matrix @ points_transformed
             initial_poits = initial_poits / initial_poits[2, :]

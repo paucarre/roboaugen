@@ -229,10 +229,10 @@ class ProjectedMeshDataset(Dataset):
         support_ids = None
         object_to_detect = None
         object_type = None
-        if self.use_cache and torch.rand(1).item() < 0.95:
-            object_type = random.choice(\
-                    list([object_type for object_type in self.object_type_to_ids.keys()]))
-            sample = self.load_from_cache(object_type, index)
+        #if self.use_cache and torch.rand(1).item() < 0.90:
+        #    object_type = random.choice(\
+        #            list([object_type for object_type in self.object_type_to_ids.keys()]))
+        #    sample = self.load_from_cache(object_type, index)
         if sample is None:
             try:
                 # Add background image and objects

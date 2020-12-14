@@ -18,15 +18,25 @@ import os
 
 class FundamentalMatrixGenerator():
 
-    def __init__(self, camera, camera_topology):
+    def __init__(self, camera, camera_topology, camera_holder_transformation ):
         self.camera = camera
         self.forward_kinematics = RobotForwardKinematics(camera_topology)
+        self.camera_holder_transformation = camera_holder_transformation
 
     def generate_fundamental_matrix(self, initial_state, final_state):
-        initial_transformation = self.forward_kinematics.get_transformation(initial_state)
-        final_transformation = self.forward_kinematics.get_transformation(final_state)
+        #print(self.forward_kinematics.get_transformation(initial_state) @ np.array([0, 0, 0, 1]).T)
+        #print(self.forward_kinematics.get_transformation(final_state) @ np.array([0, 0, 0, 1]).T)
+        #initial_transformation = self.forward_kinematics.get_transformation(initial_state) #@ self.camera_holder_transformation
+        #final_transformation = self.forward_kinematics.get_transformation(final_state)# @ self.camera_holder_transformation
+        #print(initial_transformation @  np.array([0, 0, 0, 1]).T)
+        #print(initial_transformation @  np.array([1, 0, 0, 0]).T)
+        #print(final_transformation @  np.array([0, 0, 0, 1]).T)
+        #print(final_transformation @  np.array([1, 0, 0, 0]).T)
+        initial_transformation = self.forward_kinematics.get_transformation(initial_state) @ self.camera_holder_transformation
+        final_transformation = self.forward_kinematics.get_transformation(final_state) @ self.camera_holder_transformation
         final_viewed_from_initial = np.linalg.inv(initial_transformation) @ final_transformation
         translation = final_viewed_from_initial[0:3, 3]
+        #print(translation)
         rotation = final_viewed_from_initial[0:3, 0:3]
         essential_matrix = MathUtils.skew(translation) @ rotation
         inverse_camera_matrix = np.linalg.inv(self.camera.undistorted_camera_matrix @ self.camera.trans_robot_to_camera_rotation)
@@ -252,7 +262,7 @@ class EpipolarMatch():
 
 class Triangularizer():
 
-    def __init__(self, camera_model, camera_robot_topology):
+    def __init__(self, camera_model, camera_robot_topology, camera_holder_transformation):
         self.config = Config()
         self.camera_model = camera_model
         self.camera_matrix = camera_model.undistorted_camera_matrix @ camera_model.trans_robot_to_camera_rotation
@@ -261,10 +271,11 @@ class Triangularizer():
         self.camera_matrix[0, 1] *= 0.74
         self.camera_matrix[1, 2] *= 0.74
         self.forward_kinematics = RobotForwardKinematics(camera_robot_topology)
+        self.camera_holder_transformation = camera_holder_transformation
 
     def triangularize(self, initial_state, final_state, keypoint_to_matches, triangularization_threshold=15.):
-        initial_transformation = self.forward_kinematics.get_transformation(initial_state)
-        final_transformation = self.forward_kinematics.get_transformation(final_state)
+        initial_transformation = self.forward_kinematics.get_transformation(initial_state) @ self.camera_holder_transformation
+        final_transformation = self.forward_kinematics.get_transformation(final_state) @ self.camera_holder_transformation
         initial_projection_matrix = self.camera_matrix @ np.linalg.inv(initial_transformation)[:3,:]
         final_projection_matrix = self.camera_matrix @ np.linalg.inv(final_transformation)[:3,:]
         points_predicted = []
@@ -311,8 +322,8 @@ class Triangularizer():
         image_initial = self.camera_model.undistort_image(image_initial_raw)
         image_final = self.camera_model.undistort_image(image_final_raw)
 
-        initial_transformation = np.linalg.inv(self.forward_kinematics.get_transformation(initial_state))
-        final_transformation = np.linalg.inv(self.forward_kinematics.get_transformation(final_state))
+        initial_transformation = np.linalg.inv(self.forward_kinematics.get_transformation(initial_state) @ self.camera_holder_transformation)
+        final_transformation = np.linalg.inv(self.forward_kinematics.get_transformation(final_state) @ self.camera_holder_transformation)
 
         hues = torch.arange(start=0,end=179., step = 179 / (self.config.num_vertices + 1) )
         colors = [Color(hsl=(hue / 180, 1, 0.5)).rgb for hue in hues]
@@ -330,8 +341,8 @@ class Triangularizer():
                 final_point = final_point / final_point[2]
                 image_final = cv2.circle(image_final, (int(final_point[0]), int(final_point[1])), 4, color, thickness=2)
 
-        cv2.imshow(f'Reprojected | Point in Initial Image', image_initial)
-        cv2.imshow(f'Reprojected | Point in Final Image', image_final)
+        #cv2.imshow(f'Reprojected | Point in Initial Image', image_initial)
+        #cv2.imshow(f'Reprojected | Point in Final Image', image_final)
 
 class EndToEndTransformationSolution():
 
@@ -358,7 +369,16 @@ class EndToEndTransformationSolution():
 class EndToEndTransformationEstimator():
 
     def __init__(self):
-        self.camera_topology = RobotTopology(l1=142, l2=142, l3=80, h1=50, angle_wide_1=180, angle_wide_2=180 + 90, angle_wide_3=180 + 90)
+        self.camera_topology = RobotTopology(l1=142, l2=142, l3=142, h1=200, angle_wide_1=180, angle_wide_2=180 + 90, angle_wide_3=180 + 90)
+        projection_angle = np.sqrt(2.) / 2.
+        self.camera_holder_transformation = np.array(
+            [
+                [ projection_angle, 0.,  projection_angle, 50.252],
+                [ 0.,               1.,                0.,  0.   ],
+                [-projection_angle, 0.,  projection_angle,  9.296],
+                [ 0.,               0.,                0.,  1.   ]
+            ])
+
         self.inferencer = Inferencer(distort=False, keep_dimensions=True, use_cache=False, \
             mode='silco', max_background_objects=1, max_foreground_objects=1)
         supports_folder = 'test/images/'
@@ -366,32 +386,32 @@ class EndToEndTransformationEstimator():
         self.supports = torch.cat([self.supports] * 2 ).cuda()
 
 
-    def compute_transformation(self, initial_state, final_state, image_initial_raw, image_final_raw, prediction_threshold = 0.1):
+    def compute_transformation(self, initial_state, final_state, image_initial_raw, image_final_raw, prediction_threshold=0.1, epipolar_threshold=1.):
         height, width = image_final_raw.shape[0], image_final_raw.shape[1]
         camera_model = CameraModel(width, height)
-        fundamental_matrix_generator = FundamentalMatrixGenerator(camera_model, self.camera_topology)
+        fundamental_matrix_generator = FundamentalMatrixGenerator(camera_model, self.camera_topology,  self.camera_holder_transformation )
 
         fundamental_matrix = fundamental_matrix_generator.generate_fundamental_matrix(initial_state, final_state)
         epipolar_line_generator = EpipolarLineGenerator(torch.from_numpy(fundamental_matrix))
 
         image_initial = camera_model.undistort_image(image_initial_raw)
         image_final = camera_model.undistort_image(image_final_raw)
+        original_height, original_width = image_final.shape[0], image_final.shape[1] #(480, 640, 3)
 
         # perform inference
+
         images = [image_initial, image_final]
         query = self.inferencer.get_queries_from_opencv_images(images)
-        original_height, original_width = image_final.shape[0], image_final.shape[1] #(480, 640, 3)
 
 
         query_for_view = query.clone()
         query = query.cuda()
-        predicted_heatmaps = self.inferencer.get_model_inference(self.supports, query)
+        current_supports = self.supports.clone() # supports will get distorted if reused, so cloned
+        predicted_heatmaps = self.inferencer.get_model_inference(current_supports, query)
         predicted_heatmaps = predicted_heatmaps.cpu()
 
         target_height, targe_width = predicted_heatmaps.size()[2], predicted_heatmaps.size()[3] # torch.Size([2, 3, 96, 128])
         scale = original_width / targe_width
-        #print(f'Original h/w {original_height}, {original_width} => Target h/w {target_height}, {targe_width}. Scales: {original_width / targe_width} | {original_height / target_height}')
-
 
         predicted_heatmaps = predicted_heatmaps * (predicted_heatmaps > prediction_threshold)
         heatmap_images = []
@@ -400,22 +420,37 @@ class EndToEndTransformationEstimator():
                 self.inferencer.display_results(f'Inference {idx}', query_for_view[idx: idx + 1], None, predicted_heatmaps[idx: idx + 1], threshold=0.0)
             heatmap_images.append((visual_targets, visual_predictions, visual_suports))
 
-
         keypoint_matcher = KeypointMatcher(epipolar_line_generator)
         keypoint_to_matches = keypoint_matcher.get_matches_from_predictions(predicted_heatmaps,\
-            scale, prediction_threshold = prediction_threshold, epipolar_threshold = 1.)
-        image_initial_ungrouped, image_final_ungrouped = keypoint_matcher.draw_keypoint_matches(keypoint_to_matches, image_initial_raw, image_final_raw, camera_model)
+            scale, prediction_threshold = prediction_threshold, epipolar_threshold = epipolar_threshold)
+
+        '''
+        keypoint_to_matches = {
+                0: [EpipolarMatch(np.array([224, 301]), np.array([468, 294]), 0., 0., 0.)],
+                1: [EpipolarMatch(np.array([209, 404]), np.array([503, 396]), 0., 0., 0.)],
+                2: [EpipolarMatch(np.array([ 88, 411]), np.array([389, 404]), 0., 0., 0.)],
+                3: [EpipolarMatch(np.array([123, 304]), np.array([371, 299]), 0., 0., 0.)],
+                4: [EpipolarMatch(np.array([116, 443]), np.array([379, 435]), 0., 0., 0.)],
+                5: [EpipolarMatch(np.array([221, 436]), np.array([482, 431]), 0., 0., 0.)],
+                6: [],
+                7: []
+            }
+
+        '''
+        image_initial_ungrouped, image_final_ungrouped = keypoint_matcher.draw_keypoint_matches(\
+            keypoint_to_matches, image_initial_raw, image_final_raw, camera_model)
+
         keypoint_to_matches = keypoint_matcher.group_matches(keypoint_to_matches)
         image_initial_grouped, image_final_grouped = keypoint_matcher.draw_keypoint_matches(keypoint_to_matches, image_initial_raw, image_final_raw, camera_model)
-        triangularizer = Triangularizer(camera_model, self.camera_topology)
+
+        triangularizer = Triangularizer(camera_model, self.camera_topology, self.camera_holder_transformation)
         points_predicted = triangularizer.triangularize(initial_state, final_state, keypoint_to_matches)
-        ### triangularizer.visualize_reprojection(points_predicted, image_initial_raw, image_final_raw, initial_state, final_state)
 
         procrustes_problem_solver = ProcrustesProblemSolver()
         solution = procrustes_problem_solver.solve(points_predicted)
         if solution is not None:
             image_initial_procrustes, image_final_procrustes = procrustes_problem_solver.visualize(solution,
-                self.camera_topology, initial_state, final_state, image_initial_raw, image_final_raw)
+                self.camera_topology, self.camera_holder_transformation, initial_state, final_state, image_initial_raw, image_final_raw)
             return EndToEndTransformationSolution(solution, image_initial_procrustes,
                 image_final_procrustes, image_initial_ungrouped, image_final_ungrouped,
                 image_initial_grouped, image_final_grouped, heatmap_images)
@@ -423,12 +458,20 @@ class EndToEndTransformationEstimator():
             return EndToEndTransformationSolution(None, None,
                 None, image_initial_ungrouped, image_final_ungrouped,
                 image_initial_grouped, image_final_grouped, heatmap_images)
+        '''
+        return EndToEndTransformationSolution(None, None,
+                None, image_initial_ungrouped, image_final_ungrouped,
+                None, None, None)
+        '''
 
+def to_radians(degrees):
+    return (degrees / 180) * np.pi
 
 @click.command()
 @click.option("--log_idx", default=0, help="Log folder index")
 @click.option("--threshold", default=0.1, help="Prediction heatmap threshold")
-def triangularize(log_idx, threshold):
+@click.option("--epipolar_threshold", default=1., help="Pointto epipolar line distance threshold")
+def triangularize(log_idx, threshold, epipolar_threshold):
     config = Config()
     #image_initial_path = '/home/rusalka/Pictures/Webcam/first.jpg'
     #image_final_path = '/home/rusalka/Pictures/Webcam/second.jpg'
@@ -445,13 +488,15 @@ def triangularize(log_idx, threshold):
             initial_state_data = json.load(json_file)
         with open( f'{data_log_dir}/final_state.json') as json_file:
             final_state_data = json.load(json_file)
-        initial_state = RobotState(linear_1=initial_state_data['linear_1'],
-            angle_1=initial_state_data['angle_1'], angle_2=initial_state_data['angle_2'], angle_3=initial_state_data['angle_3'])
-        final_state = RobotState(linear_1=final_state_data['linear_1'],
-            angle_1=final_state_data['angle_1'], angle_2=final_state_data['angle_2'], angle_3=final_state_data['angle_3'])
+
+
+        #initial_state = RobotState(linear_1=initial_state_data['linear_1'],
+        #    angle_1=initial_state_data['angle_1'], angle_2=initial_state_data['angle_2'], angle_3=initial_state_data['angle_3'])
+        #final_state = RobotState(linear_1=final_state_data['linear_1'],
+        #    angle_1=final_state_data['angle_1'], angle_2=final_state_data['angle_2'], angle_3=final_state_data['angle_3'])
         end_to_end_transformation_estimator = EndToEndTransformationEstimator()
         end_to_end_solution = \
-            end_to_end_transformation_estimator.compute_transformation(initial_state, final_state, image_initial_raw, image_final_raw, threshold)
+            end_to_end_transformation_estimator.compute_transformation(initial_state, final_state, image_initial_raw, image_final_raw, threshold, epipolar_threshold)
         visual_targets_initial, visual_predictions_initial, visual_suports_initial = end_to_end_solution.heatmap_images[0]
         visual_targets_final, visual_predictions_final, visual_suports_final = end_to_end_solution.heatmap_images[1]
         if visual_targets_initial is not None:
@@ -466,6 +511,7 @@ def triangularize(log_idx, threshold):
             cv2.imshow(f'Heatmap Predictions | Image 2', visual_predictions_final)
         if visual_suports_final is not None:
             cv2.imshow(f'Supports | Image 2', visual_suports_final)
+
 
         cv2.imshow(f'UnGrouped | Point in image 1', end_to_end_solution.image_initial_ungrouped)
         cv2.namedWindow(f'UnGrouped | Point in image 1')
@@ -492,9 +538,9 @@ def triangularize(log_idx, threshold):
             cv2.imshow(f'Transfomation Predicted | Point in Initial Image', end_to_end_solution.image_initial_procrustes)
             cv2.imshow(f'Transfomation Predicted | Point in Final Image', end_to_end_solution.image_final_procrustes)
 
-
         else:
             print('\tNo Solution found')
+
         cv2.waitKey()
 
 
