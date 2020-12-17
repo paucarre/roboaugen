@@ -24,19 +24,18 @@ class FundamentalMatrixGenerator():
         self.camera_holder_transformation = camera_holder_transformation
 
     def generate_fundamental_matrix(self, initial_state, final_state):
-        #print(self.forward_kinematics.get_transformation(initial_state) @ np.array([0, 0, 0, 1]).T)
-        #print(self.forward_kinematics.get_transformation(final_state) @ np.array([0, 0, 0, 1]).T)
-        #initial_transformation = self.forward_kinematics.get_transformation(initial_state) #@ self.camera_holder_transformation
-        #final_transformation = self.forward_kinematics.get_transformation(final_state)# @ self.camera_holder_transformation
-        #print(initial_transformation @  np.array([0, 0, 0, 1]).T)
-        #print(initial_transformation @  np.array([1, 0, 0, 0]).T)
-        #print(final_transformation @  np.array([0, 0, 0, 1]).T)
-        #print(final_transformation @  np.array([1, 0, 0, 0]).T)
+        print(initial_state, final_state)
+        initial_transformation = self.forward_kinematics.get_transformation(initial_state) #@ self.camera_holder_transformation
+        final_transformation = self.forward_kinematics.get_transformation(final_state)# @ self.camera_holder_transformation
+        print(initial_transformation @  np.array([0, 0, 0, 1]).T)
+        print(final_transformation @  np.array([0, 0, 0, 1]).T)
+        print(initial_transformation @  np.array([1, 0, 0, 0]).T)
+        print(final_transformation @  np.array([1, 0, 0, 0]).T)
+
         initial_transformation = self.forward_kinematics.get_transformation(initial_state) @ self.camera_holder_transformation
         final_transformation = self.forward_kinematics.get_transformation(final_state) @ self.camera_holder_transformation
         final_viewed_from_initial = np.linalg.inv(initial_transformation) @ final_transformation
         translation = final_viewed_from_initial[0:3, 3]
-        #print(translation)
         rotation = final_viewed_from_initial[0:3, 0:3]
         essential_matrix = MathUtils.skew(translation) @ rotation
         inverse_camera_matrix = np.linalg.inv(self.camera.undistorted_camera_matrix @ self.camera.trans_robot_to_camera_rotation)
@@ -210,7 +209,7 @@ class KeypointMatcher():
         point_distances = point_distances.reshape(points.shape[0], points.shape[0])
         return point_distances
 
-    def group_matches(self, keypoint_to_matches, grouping_distance_threshold = 10.):
+    def group_matches(self, keypoint_to_matches, grouping_distance_threshold = 15.):
         keypoint_to_matches_grouped = []
         for keypoint in keypoint_to_matches:
             matches_grouped = []
@@ -368,7 +367,8 @@ class EndToEndTransformationSolution():
 
 class EndToEndTransformationEstimator():
 
-    def __init__(self):
+    def __init__(self, mode):
+        self.mode = mode
         self.camera_topology = RobotTopology(l1=142, l2=142, l3=142, h1=200, angle_wide_1=180, angle_wide_2=180 + 90, angle_wide_3=180 + 90)
         projection_angle = np.sqrt(2.) / 2.
         self.camera_holder_transformation = np.array(
@@ -380,10 +380,13 @@ class EndToEndTransformationEstimator():
             ])
 
         self.inferencer = Inferencer(distort=False, keep_dimensions=True, use_cache=False, \
-            mode='silco', max_background_objects=1, max_foreground_objects=1)
+            mode=mode, max_background_objects=1, max_foreground_objects=1)
         supports_folder = 'test/images/'
-        self.supports = self.inferencer.get_supports_from_folder(supports_folder)
-        self.supports = torch.cat([self.supports] * 2 ).cuda()
+        if self.mode is not 'keypoints':
+            self.supports = self.inferencer.get_supports_from_folder(supports_folder)
+            self.supports = torch.cat([self.supports] * 2 ).cuda()
+        else:
+            self.supports = None
 
 
     def compute_transformation(self, initial_state, final_state, image_initial_raw, image_final_raw, prediction_threshold=0.1, epipolar_threshold=1.):
@@ -406,7 +409,9 @@ class EndToEndTransformationEstimator():
 
         query_for_view = query.clone()
         query = query.cuda()
-        current_supports = self.supports.clone() # supports will get distorted if reused, so cloned
+        current_supports = None
+        if self.supports is not None:
+            current_supports = self.supports.clone() # supports will get distorted if reused, so cloned
         predicted_heatmaps = self.inferencer.get_model_inference(current_supports, query)
         predicted_heatmaps = predicted_heatmaps.cpu()
 
@@ -471,7 +476,8 @@ def to_radians(degrees):
 @click.option("--log_idx", default=0, help="Log folder index")
 @click.option("--threshold", default=0.1, help="Prediction heatmap threshold")
 @click.option("--epipolar_threshold", default=1., help="Pointto epipolar line distance threshold")
-def triangularize(log_idx, threshold, epipolar_threshold):
+@click.option("--mode", default='keypoints', help="Training mode: keypoints, silco.")
+def triangularize(log_idx, threshold, epipolar_threshold, mode):
     config = Config()
     #image_initial_path = '/home/rusalka/Pictures/Webcam/first.jpg'
     #image_final_path = '/home/rusalka/Pictures/Webcam/second.jpg'
@@ -490,11 +496,15 @@ def triangularize(log_idx, threshold, epipolar_threshold):
             final_state_data = json.load(json_file)
 
 
-        #initial_state = RobotState(linear_1=initial_state_data['linear_1'],
-        #    angle_1=initial_state_data['angle_1'], angle_2=initial_state_data['angle_2'], angle_3=initial_state_data['angle_3'])
-        #final_state = RobotState(linear_1=final_state_data['linear_1'],
-        #    angle_1=final_state_data['angle_1'], angle_2=final_state_data['angle_2'], angle_3=final_state_data['angle_3'])
-        end_to_end_transformation_estimator = EndToEndTransformationEstimator()
+        initial_state = RobotState.from_robot_parameters(200, to_radians(30.9866), to_radians(116.6691), 0)
+        final_state = RobotState.from_robot_parameters(200, to_radians(-30.9866), to_radians(-116.6691), 0)
+        '''
+        initial_state = RobotState(linear_1=initial_state_data['linear_1'],
+            angle_1=initial_state_data['angle_1'], angle_2=initial_state_data['angle_2'], angle_3=initial_state_data['angle_3'])
+        final_state = RobotState(linear_1=final_state_data['linear_1'],
+            angle_1=final_state_data['angle_1'], angle_2=final_state_data['angle_2'], angle_3=final_state_data['angle_3'])
+        '''
+        end_to_end_transformation_estimator = EndToEndTransformationEstimator(mode)
         end_to_end_solution = \
             end_to_end_transformation_estimator.compute_transformation(initial_state, final_state, image_initial_raw, image_final_raw, threshold, epipolar_threshold)
         visual_targets_initial, visual_predictions_initial, visual_suports_initial = end_to_end_solution.heatmap_images[0]

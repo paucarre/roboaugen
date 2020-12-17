@@ -64,13 +64,11 @@ class Trainer():
   '''
 
   def compute_loss(self, target_heatmaps, predicted_heatmaps, spatial_penalty):
-    # false negatives
-    target_indicator = (target_heatmaps > 0.01).double().data
-    false_negative_loss = ((target_heatmaps * target_indicator) - (predicted_heatmaps * target_indicator)).abs().sum() / (target_indicator.sum() + 1.)
-
-    prediction_indicator = (predicted_heatmaps > 0.01).double().data
-    false_positive_loss = ((target_heatmaps * prediction_indicator) - (predicted_heatmaps * prediction_indicator)).abs().sum() / (prediction_indicator.sum() + 1.)
-
+    error =  target_heatmaps - predicted_heatmaps
+    # F.N: errors that are supposed to be positives (target) but predicted not, are false negatives
+    false_negative_loss = (target_heatmaps.data * error).abs().sum() / (target_heatmaps.data.sum() + 0.01)
+    # F.P: errors that are predicted to be positive are false positives
+    false_positive_loss = (predicted_heatmaps.data * error).abs().sum() / (predicted_heatmaps.data.sum() + 0.01)
     return false_negative_loss, false_positive_loss
 
   def save_train_state(self, epoch, current_iteration, optimizer_higher_resolution, optimizer_silco):
@@ -134,7 +132,6 @@ class Trainer():
 
     optimizer_higher_resolution, optimizer_silco, epoch_start, current_iteration = self.load_train_state()
     train_loader = None
-    batches = None
     epoch_start = 0
     print(f'Starting with epoch {epoch_start + 1} with a total of {epochs} epochs')
     for epoch in range(epoch_start + 1, epochs):
@@ -147,7 +144,6 @@ class Trainer():
                                                     batch_size=self.batch_size,
                                                     shuffle=False,
                                                     num_workers=8)
-        batches = len(train_loader)
       for batch_index, (queries, supports, target_heatmaps, spatial_penalty, _, _) in tqdm(enumerate(train_loader)):
         losses = {}
         queries = queries.cuda(non_blocking=True)
@@ -182,6 +178,7 @@ class Trainer():
           self.save_train_state(epoch_start, current_iteration, optimizer_higher_resolution, optimizer_silco)
       if (epoch + 1) % self.config.save_each_epoch == 0:
         self.save_models()
+        self.save_train_state(epoch_start, current_iteration, optimizer_higher_resolution, optimizer_silco)
 
 @click.command()
 @click.option("--learning_rate", default=0.001, help="Learning rate")

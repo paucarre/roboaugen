@@ -28,7 +28,7 @@ class ObjectData():
 
 class ProjectedMeshDataset(Dataset):
 
-    def __init__(self, height, width, num_vertices, max_background_objects, max_foreground_objects, distort=True, keep_dimensions=False, use_cache=True):
+    def __init__(self, height, width, num_vertices, max_background_objects, max_foreground_objects, distort=True, keep_dimensions=False, use_cache=True, forced_object_type=None):
         self.height = height
         self.width = width
         self.max_background_objects = max_background_objects
@@ -43,6 +43,7 @@ class ProjectedMeshDataset(Dataset):
         self.use_cache = use_cache
         self.object_type_to_ids = self.config.get_object_type_to_ids()
         self.keep_dimensions = False
+        self.forced_object_type = forced_object_type
 
     def __len__(self,):
         return sum([len(ids) for ids in self.object_type_to_ids.values()])
@@ -252,7 +253,10 @@ class ProjectedMeshDataset(Dataset):
 
 
                 # There will always be supports => TODO: actually during only keypoint training/inference there are no supports!!
-                supports = self.get_supports(index, object_type)
+                if self.forced_object_type is None:
+                    supports = self.get_supports(index, object_type)
+                else:
+                    supports = self.get_supports(index, self.forced_object_type)
                 #print(supports.size())
 
                 # Add image, if applicable
@@ -268,7 +272,7 @@ class ProjectedMeshDataset(Dataset):
                     coordinates, coordinates_probs = self.get_coordinates_and_probs(data)
                 else:
                     input_image, target, spatial_penalty, coordinates, coordinates_probs = self.get_only_background(index, background_image, object_images_foreground, object_alphas_foreground)
-                self.save_in_cache(object_type, index, input_image, supports, target, spatial_penalty, coordinates, coordinates_probs)
+                #self.save_in_cache(object_type, index, input_image, supports, target, spatial_penalty, coordinates, coordinates_probs)
                 sample = input_image, supports, target, spatial_penalty, coordinates, coordinates_probs
             except:
                 self.handle_data_loading_error(index, object_type, support_ids, object_to_detect)

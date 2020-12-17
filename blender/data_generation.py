@@ -13,76 +13,19 @@ import json
 
 project_root = f'{Path.home()}/work/roboaugen'
 
-materials_model = [
-    {
-        'name': 'plastic-gray',
-        'metallic': 0.1,   
-        'diffuse_color': (0.9, 0.9, 0.9, 1.0),
-        'roughness': 0.1
-        
-    },
-    {
-        'name': 'plastic-red',
-        'metallic': 0.1,   
-        'diffuse_color': (0.9, 0.2, 0.2, 1.0),
-        'roughness': 0.3
+def build_random_material(texture):
+    return {
+        'name': texture,
+        'metalic': random.random(),
+        'texture':texture,
+        'roughness': random.random(),
     }
-    ,
-    {
-        'name': 'metallic-green',
-        'metallic': 0.9,   
-        'diffuse_color': (0.2, 0.9, 0.2, 1.0),
-        'roughness': 0.6
-    },
-    {
-        'name': 'metallic-blue',
-        'metallic': 0.9,   
-        'diffuse_color': (0.2, 0.2, 0.9, 1.0),
-        'roughness': 0.9
-    },
-    {
-        'name': 'wood',
-        'metallic': 0.1,   
-        'texture': 'Wood-2093.jpg',
-        'roughness': 0.9
-    },
-    {
-        'name': 'concrete',
-        'metallic': 0.1,   
-        'texture': 'Concrete-0561.jpg',
-        'roughness': 0.9
-    },
-    {
-        'name': 'cracks',
-        'metallic': 0.1,   
-        'texture': 'Cracks_008.jpg',
-        'roughness': 0.9
-    },
-    {
-        'name': 'ground',
-        'metallic': 0.1,   
-        'texture': 'Ground-0179.jpg',
-        'roughness': 0.9
-    },
-    {
-        'name': 'metal',
-        'metallic': 0.9,   
-        'texture': 'Metal-4126.jpg',
-        'roughness': 0.1
-    },
-    {
-        'name': 'tarp',
-        'metallic': 0.5,   
-        'texture': 'Tarp-0486.jpg',
-        'roughness': 0.5
-    },
-    {
-        'name': 'dirt',
-        'metallic': 0.05,   
-        'texture': 'thumb-large-dirt_7805.jpg',
-        'roughness': 0.95
-    }
-]
+    
+def get_random_materials_model():
+    textures = os.listdir(f'{project_root}/data/textures')
+    materials_model = [build_random_material(texture) for texture in textures]
+    create_materials(materials_model)
+    return materials_model
 
 
 def render(image_path):
@@ -148,7 +91,7 @@ def rotate_camera(degrees=30):
 
 def rotate_object(degrees):
     object =  bpy.data.objects['Model']
-    object.rotation_euler = (math.pi / 2., 0.0, math.radians(degrees))
+    object.rotation_euler = (math.pi / 2., math.pi / 4., math.radians(degrees))
 
 def move_object(x, y, z):
     object =  bpy.data.objects['Model']
@@ -243,8 +186,7 @@ def set_background(id):
     background = f'//../data/backgrounds/{id}.jpg'
     bpy.data.images['background'].filepath = background
 
-def set_material(id):
-    material = materials_model[id]['name']
+def set_material(material):
     obj = bpy.data.objects['Model']
     mat = bpy.data.materials[material]
     if obj.data.materials:
@@ -302,17 +244,17 @@ def get_background_ids():
     ids = os.listdir(backgrounds_folder)
     return ids
 
-def randomize_scene(sample):
-    object_rotation = random.randint(0,45)
-    object_x = random.randint(-40, 20)
-    object_y = random.randint(-20, 20)
+def randomize_scene(sample, materials_model):
+    object_rotation = random.randint(-35,35)
+    object_x = random.randint(-40, 40)
+    object_y = random.randint(-40, 40)
     object_z = random.randint(0, 0)
     object_position = [object_x, object_y, object_z]
     camera_distance = 60
-    camera_height = random.randint(object_z, 30)
+    camera_height = random.randint(object_z - 40, object_z + 40)
     camera_rotation = 0
-    light_x = object_x + random.randint(-30,30)
-    light_y = object_y + random.randint(-30,30)
+    light_x = object_x + random.randint(-20,20)
+    light_y = object_y + random.randint(-20,20)
     light_z = random.randint(50,80)
     light_position = [light_x, light_y, light_z]
     light_intensity = random.randint(100 * light_z, 5000 * light_z)
@@ -321,19 +263,20 @@ def randomize_scene(sample):
     material_id = random.randint(0, len(materials_model) - 1)
     cast_shadow_id = random.randint(0, 1)
     use_background = True
-    object_scale = 0.1 + (random.random() * 0.2)
+    object_scale = 0.03 + (random.random() * 0.4)
     return to_map(light_position, cast_shadow_id, background_id, material_id, \
         focal, object_position, object_rotation, camera_height, camera_distance, \
         light_intensity, camera_rotation, use_background, object_scale)
         
 
 
-def apply_scene_data(scene_data):
+def apply_scene_data(scene_data, materials_model):
     add_object(scene_data['object_scale'])
     set_background_type(scene_data['use_background'])
     set_background(scene_data['background_id'])
     cast_shadow(scene_data['cast_shadow_id'] == 1)
-    set_material(scene_data['material_id'])
+    material = materials_model[scene_data['material_id']]['name']
+    set_material(material)
     set_light_intensity(energy=scene_data['light_intensity'])
     change_camera_focal_length(scene_data['focal'])
     move_light(
@@ -369,32 +312,33 @@ def get_next_sample_id(material_name):
     else:
         return 0
 
-def write_json(folder_path, filename, data):
+def write_json(folder_path, filename, data, materials_model):
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)
     data_path = f"{folder_path}/{filename}.json"
     with open(data_path, 'w') as outfile:
         data_string = json.dumps(data, indent=4, sort_keys=True)
         outfile.write(data_string)
-    apply_scene_data(data)
+    apply_scene_data(data, materials_model)
     render(f"{folder_path}/{filename}.png")
     data['use_background'] = False
     data['cast_shadow_id'] = 0
-    apply_scene_data(data)
+    apply_scene_data(data, materials_model)
     render(f"{folder_path}/{filename}_no_background.png")
 
 
-def save_data(sample_dir, data):
-    write_json(sample_dir, 'data', data)
+def save_data(sample_dir, data, materials_model):
+    write_json(sample_dir, 'data', data, materials_model)
 
 def generate_random_samples(samples=100):
     sample_dirs = []
-    for sample in range(samples):        
-        data = randomize_scene(sample)        
-        apply_scene_data(data)
+    for sample in range(samples):
+        materials_model = get_random_materials_model()      
+        data = randomize_scene(sample, materials_model)        
+        apply_scene_data(data, materials_model)
         render(f"/tmp/blender_generator.png")
         bbox_vertices, projected_visible_vertices = get_projected_visible_vertices()
-        if len([v for v  in projected_visible_vertices if v is not None]) > 0:
+        if len([v for v  in projected_visible_vertices if v is not None]) > 3:
             data['projected_visible_vertices'] = projected_visible_vertices
             data['bbox_vertices'] = bbox_vertices
             material_name = materials_model[data['material_id']]['name']
@@ -403,7 +347,7 @@ def generate_random_samples(samples=100):
             if not os.path.exists(folder_name):            
                 os.makedirs(folder_name)
             sample_dir = f'{folder_name}/{sample_id}'
-            save_data(sample_dir, data)
+            save_data(sample_dir, data, materials_model)
             sample_dirs.append(sample_dir)
             sample_id += 1
     return sample_dirs
@@ -417,7 +361,7 @@ def display_sample(sample_id):
             apply_scene_data(data)
             render(None)
 
-def create_materials():    
+def create_materials(materials_model):    
     materials = bpy.data.materials
     for material in materials:
         bpy.data.materials.remove(material)        
@@ -444,13 +388,12 @@ def create_materials():
             
         
 if __name__ == "__main__":
-    recreate_light_source()
-    create_materials()
+    recreate_light_source()    
     scene = bpy.context.scene
     scene.render.resolution_percentage = 100
     scene.render.resolution_x = 512
     scene.render.resolution_y = 512
-    sample_dirs = generate_random_samples(100)
+    sample_dirs = generate_random_samples(10000)
     print(sample_dirs)
     
     #display_sample(14)

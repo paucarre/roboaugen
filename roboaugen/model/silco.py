@@ -317,8 +317,10 @@ class Silco(nn.Module):
 
     @staticmethod
     def backbone_features(backbone, queries, supports):
-        supports_compacted = supports.view(-1, *queries.size()[1:])
-        support_features_compacted = backbone(supports_compacted)
+        support_features_compacted = None
+        if supports is not None:
+            supports_compacted = supports.view(-1, *queries.size()[1:])
+            support_features_compacted = backbone(supports_compacted)
         query_features = backbone(queries)
         return query_features, support_features_compacted
 

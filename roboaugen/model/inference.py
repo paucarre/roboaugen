@@ -21,7 +21,7 @@ import click
 class Inferencer():
 
   def __init__(self, distort=False, keep_dimensions=False, use_cache=False, \
-      mode='silco', max_background_objects=1, max_foreground_objects=1):
+      mode='silco', max_background_objects=1, max_foreground_objects=1, object_type=None):
     self.config = Config()
     self.distort = distort
     self.keep_dimensions = keep_dimensions
@@ -29,8 +29,10 @@ class Inferencer():
     self.mode = mode
     self.max_background_objects = max_background_objects
     self.max_foreground_objects = max_foreground_objects
+    self.object_type = object_type
     self.dataset = ProjectedMeshDataset(self.config.input_height, self.config.input_width, self.config.num_vertices,
-      self.max_background_objects, self.max_foreground_objects, distort=self.distort, keep_dimensions=self.keep_dimensions, use_cache=self.use_cache)
+      self.max_background_objects, self.max_foreground_objects, distort=self.distort,
+      keep_dimensions=self.keep_dimensions, use_cache=self.use_cache, forced_object_type=object_type)
     self.higher_resolution = self.config.load_higher_resolution_model().cuda()
     self.silco = self.config.load_silco_model().cuda()
     self.backbone = self.config.load_mobilenet_model().cuda()
@@ -65,7 +67,7 @@ class Inferencer():
         #cv2.imshow(f'Heatmap_{label}_{sample}', predictions_in_sample)
       return new_input_image
 
-  def get_supports_and_query(self, sampleid, file, supports):
+  def get_supports_and_query(self, sampleid, file, supports_path):
     target_heatmaps = None
     spatial_penalty = None
     if file is None or file == '':
@@ -74,8 +76,13 @@ class Inferencer():
       target_heatmaps = torch.cat([target.unsqueeze(0)], dim=0)
       spatial_penalty = torch.cat([spatial_penalty.unsqueeze(0)], dim=0)
       supports = supports.unsqueeze(0)
+      print('nere')
     else:
-      supports = self.get_supports_from_folder(supports)
+      if supports_path is not None and supports_path != '':
+        supports = self.get_supports_from_folder(supports_path)
+      else:
+        supports = self.dataset.get_supports(sampleid, self.dataset.forced_object_type).unsqueeze(0)
+        print(supports.size())
       query = self.get_queries_from_opencv_images([cv2.imread(file)])
     return supports, query, target_heatmaps, spatial_penalty
 
@@ -92,8 +99,10 @@ class Inferencer():
     return queries
 
   def get_model_inference(self, supports, query):
-    supports = supports.cuda()
-    query = query.cuda()
+    w = query.size()[2]
+    h = query.size()[3]
+    if supports is not None:
+      supports = supports[:, :, :, :w, :h]
     query_features, support_features = Silco.backbone_features(self.backbone, query, supports)
     if self.mode == 'silco':
       query_features, spatial_classifier, feature_classifier, spatial_supports = self.silco(query_features, support_features)
@@ -128,17 +137,25 @@ class Inferencer():
 @click.option("--use_cache", default=False, help="Use image cache.")
 @click.option("--file", default='', help="Path to image file.")
 @click.option("--threshold", default=0.1, help="Positive threshold.")
-@click.option("--supports", default='', help="Path to support images.")
+@click.option("--supports_path", default='', help="Path to support images.")
 @click.option("--heatmap", default=False, help="Display heatmap without image.")
 @click.option("--mode", default='keypoints', help="Training mode: keypoints, silco.")
-@click.option("--max_background_objects", default=0, help="Maximum number of background objects not in target for keypoints")
-@click.option("--max_foreground_objects", default=0, help="Maximum number of foreground objects not in target for keypoints.")
-def inference(sampleid, distort, keep_dimensions, use_cache, file, threshold, supports, heatmap, mode, max_background_objects, max_foreground_objects):
+@click.option("--max_background_objects", default=1, help="Maximum number of background objects not in target for keypoints")
+@click.option("--max_foreground_objects", default=1, help="Maximum number of foreground objects not in target for keypoints.")
+@click.option("--object_type", default='', help="Supports object type.")
+def inference(sampleid, distort, keep_dimensions, use_cache, file, threshold, supports_path, heatmap, mode, max_background_objects, max_foreground_objects, object_type):
+  object_type = None if object_type == '' else object_type
   inferencer = Inferencer(distort, keep_dimensions, use_cache, \
-      mode, max_background_objects, max_foreground_objects)
-  supports, query, target_heatmaps, spatial_penalty = inferencer.get_supports_and_query(sampleid, file, supports)
+      mode, max_background_objects, max_foreground_objects, object_type)
+  supports, query, target_heatmaps, spatial_penalty = inferencer.get_supports_and_query(sampleid, file, supports_path)
+  if distort:
+    query = inferencer.dataset.distort_image(query)
+  #if distort:
+  #  supports = torch.cat([inferencer.dataset.distort_image(supports[0, support_idx]).unsqueeze(0) for support_idx in range(supports.size()[1])], 0).unsqueeze(0)
   visualize_query = query.clone()
   visualize_suports = supports.clone()
+  query = query.cuda()
+  supports = supports.cuda()
   predicted_heatmaps = inferencer.get_model_inference(supports, query)
   inferencer.display_results(sampleid, visualize_query, visualize_suports, predicted_heatmaps, threshold, target_heatmaps, spatial_penalty)
   cv2.waitKey(0)
