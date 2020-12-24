@@ -70,19 +70,22 @@ class Inferencer():
   def get_supports_and_query(self, sampleid, file, supports_path):
     target_heatmaps = None
     spatial_penalty = None
+    supports = None
     if file is None or file == '':
       query, supports, target, spatial_penalty, _, _ = self.dataset.__getitem__(sampleid)
+      if self.mode == 'keypoints':
+        supports = None
+      else:
+        supports = supports.unsqueeze(0)
       query = torch.cat([query.unsqueeze(0)], dim=0)
       target_heatmaps = torch.cat([target.unsqueeze(0)], dim=0)
       spatial_penalty = torch.cat([spatial_penalty.unsqueeze(0)], dim=0)
-      supports = supports.unsqueeze(0)
-      print('nere')
     else:
-      if supports_path is not None and supports_path != '':
-        supports = self.get_supports_from_folder(supports_path)
-      else:
-        supports = self.dataset.get_supports(sampleid, self.dataset.forced_object_type).unsqueeze(0)
-        print(supports.size())
+      if self.mode != 'keypoints':
+        if supports_path is not None and supports_path != '':
+          supports = self.get_supports_from_folder(supports_path)
+        else:
+          supports = self.dataset.get_supports(sampleid, self.dataset.forced_object_type).unsqueeze(0)
       query = self.get_queries_from_opencv_images([cv2.imread(file)])
     return supports, query, target_heatmaps, spatial_penalty
 
@@ -104,7 +107,7 @@ class Inferencer():
     if supports is not None:
       supports = supports[:, :, :, :w, :h]
     query_features, support_features = Silco.backbone_features(self.backbone, query, supports)
-    if self.mode == 'silco':
+    if self.mode != 'keypoints':
       query_features, spatial_classifier, feature_classifier, spatial_supports = self.silco(query_features, support_features)
     predicted_heatmaps = self.higher_resolution(query_features)
     return predicted_heatmaps
@@ -120,14 +123,11 @@ class Inferencer():
       spatial_penalty = self.display_heatmap('Spatial Penalty', visualize_query, spatial_penalty, threshold)
       images = np.hstack((targets, spatial_penalty, visual_predictions))
       visual_targets = images
-      cv2.imshow(f'{label} - Targets - Spatial Penalty - Predictions', images)
     if visualize_suports is not None:
       visual_suports = visualize_suports.squeeze(0)
       visual_suports = [Inferencer.to_numpy_image(visual_suports[sample_idx]) for sample_idx in range(visual_suports.size()[0])]
       visual_suports = np.hstack(visual_suports)
 
-      cv2.imshow(f'{label} Supports', visual_suports)
-      cv2.imshow(f'{label} Predictions', visual_predictions)
     return visual_targets, visual_predictions, visual_suports
 
 @click.command()
@@ -153,11 +153,19 @@ def inference(sampleid, distort, keep_dimensions, use_cache, file, threshold, su
   #if distort:
   #  supports = torch.cat([inferencer.dataset.distort_image(supports[0, support_idx]).unsqueeze(0) for support_idx in range(supports.size()[1])], 0).unsqueeze(0)
   visualize_query = query.clone()
-  visualize_suports = supports.clone()
+
+  visualize_suports = None
+  if mode != 'keypoints':
+    visualize_suports = supports.clone()
+    supports = supports.cuda()
   query = query.cuda()
-  supports = supports.cuda()
   predicted_heatmaps = inferencer.get_model_inference(supports, query)
-  inferencer.display_results(sampleid, visualize_query, visualize_suports, predicted_heatmaps, threshold, target_heatmaps, spatial_penalty)
+  visual_targets, visual_predictions, visual_suports = inferencer.display_results(sampleid, visualize_query, visualize_suports, predicted_heatmaps, threshold, target_heatmaps, spatial_penalty)
+  if visual_targets is not None:
+    cv2.imshow(f'{sampleid} - Targets - Spatial Penalty - Predictions', visual_targets)
+  #cv2.imshow(f'{sampleid} - Targets - Spatial Penalty - Predictions', visualize_query)
+  #cv2.imshow(f'{sampleid} Supports', visual_suports)
+  cv2.imshow(f'{sampleid} Predictions', visual_predictions)
   cv2.waitKey(0)
 
 if __name__ == '__main__':

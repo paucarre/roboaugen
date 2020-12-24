@@ -194,7 +194,7 @@ class ProjectedMeshDataset(Dataset):
         return torch.cat(supports, 0)
 
     def generate_target(self, data, std):
-        return self.target_generator.generate_target(data['projected_visible_vertices'], data['resolution'][1], data['resolution'][0], std)
+        return self.target_generator.generate_target(data['bbox_vertices'], data['resolution'][1], data['resolution'][0], std)
 
     def get_input_image(self, background_image, object_to_detect, object_images_foreground, object_alphas_foreground):
         input_image = self.config.get_image_sample_alpha(object_to_detect.object_type, object_to_detect.sample_id)
@@ -265,7 +265,7 @@ class ProjectedMeshDataset(Dataset):
                 if object_in_image:
                     input_image, object_alphas = self.get_input_image(background_image, object_to_detect, object_images_foreground, object_alphas_foreground)
                     data = self.config.get_data_sample(object_type, object_to_detect.sample_id)
-                    target = self.generate_target(data, 1)
+                    target = self.generate_target(data, 3)
                     spatial_penalty = self.generate_target(data, 10).clamp(0.0, 0.9)
                     target = target * (1.0 - object_alphas_foreground)
                     spatial_penalty = spatial_penalty * (1.0 - object_alphas_foreground)

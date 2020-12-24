@@ -38,10 +38,11 @@ app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 socketio = SocketIO(app, async_mode=None)
 
+mode = 'keypoints'
 global end_to_end_transformation_estimator
 end_to_end_transformation_estimator = None
 if end_to_end_transformation_estimator is None:
-    end_to_end_transformation_estimator = EndToEndTransformationEstimator()
+    end_to_end_transformation_estimator = EndToEndTransformationEstimator(mode)
 
 global initial_state
 initial_state = None
@@ -142,10 +143,10 @@ def message():
 
         image_initial = np.copy(image_initial_raw)
         image_final = np.copy(image_final_raw)
-        threshold = 0.1
-        epipolar_threshold = 10
+        threshold = 0.25
+        epipolar_threshold = 6
         end_to_end_solution = end_to_end_transformation_estimator.compute_transformation(initial_state,
-            final_state, image_initial, image_final, threshold)
+            final_state, image_initial, image_final, threshold, epipolar_threshold)
 
         visual_targets_initial, visual_predictions_initial, visual_suports_initial = end_to_end_solution.heatmap_images[0]
         visual_targets_final, visual_predictions_final, visual_suports_final = end_to_end_solution.heatmap_images[1]
@@ -188,6 +189,10 @@ def message():
             if end_to_end_solution.image_initial_grouped is not None else ""
         image_final_grouped = base64.b64encode(cv2.imencode('.jpg', end_to_end_solution.image_final_grouped)[1]).decode("utf-8") \
             if end_to_end_solution.image_final_grouped is not None else ""
+        image_initial_ungrouped = base64.b64encode(cv2.imencode('.jpg', end_to_end_solution.image_initial_ungrouped)[1]).decode("utf-8") \
+            if end_to_end_solution.image_initial_ungrouped is not None else ""
+        image_final_ungrouped = base64.b64encode(cv2.imencode('.jpg', end_to_end_solution.image_final_ungrouped)[1]).decode("utf-8") \
+            if end_to_end_solution.image_final_ungrouped is not None else ""
 
 
 
@@ -198,7 +203,9 @@ def message():
             'image_initial_procrustes': image_initial_procrustes,
             'image_final_procrustes': image_final_procrustes,
             'image_initial_grouped': image_initial_grouped,
-            'image_final_grouped': image_final_grouped
+            'image_final_grouped': image_final_grouped,
+            'image_initial_ungrouped': image_initial_ungrouped,
+            'image_final_ungrouped': image_final_ungrouped
         }
         socketio.emit('camera_updated', data)
 

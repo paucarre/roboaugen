@@ -91,8 +91,13 @@ def rotate_camera(degrees=30):
 
 def rotate_object(degrees):
     object =  bpy.data.objects['Model']
-    object.rotation_euler = (math.pi / 2., math.pi / 4., math.radians(degrees))
-
+    #object.rotation_euler.rotate_axis("Y", math.radians(degrees))
+    #object.rotation_euler = (math.pi / 2., math.pi / 4., math.radians(degrees)
+     
+    object.rotation_euler.rotate_axis("Z", -math.pi / 4)
+    object.rotation_euler.rotate_axis("Y", math.radians(degrees))
+    #object.rotation_euler = (math.pi / 2., math.pi / 4, math.radians(degrees))
+    
 def move_object(x, y, z):
     object =  bpy.data.objects['Model']
     object.location = Vector((x, y, z))
@@ -107,7 +112,7 @@ def move_light(x, y, z):
 def set_light_intensity(energy=100):
     bpy.data.lights['Lamp'].energy = energy
 
-def change_camera_focal_length(lens=35):
+def change_camera_focal_length(lens=40):
      bpy.data.cameras['Camera'].clip_end = 10000000
      bpy.data.cameras['Camera'].lens = lens
 
@@ -138,7 +143,7 @@ def add_object(scale):
     bpy.ops.transform.rotate(value = -1.5708, orient_axis= 'X')
     change_camera_focal_length(35)
     move_object(0., 0., 0.)
-    rotate_object(degrees=0.0)
+    #rotate_object(degrees=0.0)
 
 def BVHTreeAndVertices( bbox_vertices ):
     polygons = [
@@ -204,7 +209,8 @@ def set_material(material):
         bpy.ops.object.editmode_toggle()
 
 def cast_shadow(cast):
-    bpy.data.objects['Plane'].hide_render = not cast
+    pass # DISABLED
+    #bpy.data.objects['Plane'].hide_render = not cast
 
 def set_background_type(use_image):
     tree = bpy.context.scene.node_tree
@@ -245,25 +251,25 @@ def get_background_ids():
     return ids
 
 def randomize_scene(sample, materials_model):
-    object_rotation = random.randint(-35,35)
-    object_x = random.randint(-40, 40)
-    object_y = random.randint(-40, 40)
-    object_z = random.randint(0, 0)
+    object_rotation = 0#random.randint(-180,180)
+    object_x = 0#random.randint(-40, 40)
+    object_y = 0#random.randint(-40, 40)
+    object_z = 0#random.randint(0, 0)
     object_position = [object_x, object_y, object_z]
     camera_distance = 60
-    camera_height = random.randint(object_z - 40, object_z + 40)
+    camera_height = 0#random.randint(object_z - 40, object_z + 40)
     camera_rotation = 0
     light_x = object_x + random.randint(-20,20)
     light_y = object_y + random.randint(-20,20)
-    light_z = random.randint(50,80)
+    light_z = random.randint(100,150)
     light_position = [light_x, light_y, light_z]
-    light_intensity = random.randint(100 * light_z, 5000 * light_z)
-    focal = random.randint(25,40)
+    light_intensity = random.randint(50 * light_z, 2000 * light_z)
+    focal = random.randint(39,43)
     background_id = random.randint(0, len(get_background_ids()) - 1)
     material_id = random.randint(0, len(materials_model) - 1)
     cast_shadow_id = random.randint(0, 1)
     use_background = True
-    object_scale = 0.03 + (random.random() * 0.4)
+    object_scale = 0.07 + (random.random() * 0.3)
     return to_map(light_position, cast_shadow_id, background_id, material_id, \
         focal, object_position, object_rotation, camera_height, camera_distance, \
         light_intensity, camera_rotation, use_background, object_scale)
@@ -319,8 +325,8 @@ def write_json(folder_path, filename, data, materials_model):
     with open(data_path, 'w') as outfile:
         data_string = json.dumps(data, indent=4, sort_keys=True)
         outfile.write(data_string)
-    apply_scene_data(data, materials_model)
-    render(f"{folder_path}/{filename}.png")
+    #apply_scene_data(data, materials_model)
+    #render(f"{folder_path}/{filename}.png")
     data['use_background'] = False
     data['cast_shadow_id'] = 0
     apply_scene_data(data, materials_model)
@@ -347,7 +353,7 @@ def generate_random_samples(samples=100):
             if not os.path.exists(folder_name):            
                 os.makedirs(folder_name)
             sample_dir = f'{folder_name}/{sample_id}'
-            save_data(sample_dir, data, materials_model)
+            #save_data(sample_dir, data, materials_model)
             sample_dirs.append(sample_dir)
             sample_id += 1
     return sample_dirs
@@ -393,7 +399,7 @@ if __name__ == "__main__":
     scene.render.resolution_percentage = 100
     scene.render.resolution_x = 512
     scene.render.resolution_y = 512
-    sample_dirs = generate_random_samples(10000)
+    sample_dirs = generate_random_samples(1)
     print(sample_dirs)
     
     #display_sample(14)

@@ -44,8 +44,8 @@ class Trainer():
       spatial_classifiers_entropy += classifiers_entropy
     classifiers_entropy /= len(classifiers)
     return classifiers_entropy
-  '''
-  def compute_loss(self, target_heatmaps, predicted_heatmaps, spatial_penalty):
+
+  def compute_loss_disabled(self, target_heatmaps, predicted_heatmaps, spatial_penalty):
     positives = target_heatmaps > 0.
     negatives = target_heatmaps == 0.
     error = (target_heatmaps - predicted_heatmaps).abs()
@@ -59,17 +59,39 @@ class Trainer():
     mean_positive_error = sum_positive_error / positive_area
     mean_negative_error = sum_negative_error / negative_area
 
-    error_normalized = (mean_positive_error + mean_negative_error) / 2.
-    return error_normalized.mean()
-  '''
+    return mean_negative_error.mean(), mean_positive_error.mean()
 
-  def compute_loss(self, target_heatmaps, predicted_heatmaps, spatial_penalty):
+  '''
+  def compute_loss_old_2(self, target_heatmaps, predicted_heatmaps, spatial_penalty):
     error =  target_heatmaps - predicted_heatmaps
     # F.N: errors that are supposed to be positives (target) but predicted not, are false negatives
     false_negative_loss = (target_heatmaps.data * error).abs().sum() / (target_heatmaps.data.sum() + 0.01)
     # F.P: errors that are predicted to be positive are false positives
     false_positive_loss = (predicted_heatmaps.data * error).abs().sum() / (predicted_heatmaps.data.sum() + 0.01)
-    return false_negative_loss, false_positive_loss
+
+    #true_negative_loss = -(( 1. - predicted_heatmaps.data) *  ( 1. - target_heatmaps.data) * (1. - error) ).abs().sum() \
+    #   / ((( 1. - predicted_heatmaps.data) *  ( 1. - target_heatmaps.data)).data.sum() + 0.01)
+    return false_negative_loss, false_positive_loss#, true_negative_loss
+  '''
+
+  def compute_loss_mean(self, mask, loss):
+    loss_sum_per_keypoint_and_sample = loss.permute(2, 3, 0, 1).view(-1, loss.size()[0], loss.size()[1]).sum(0)
+    loss_area_per_keypoint_and_sample =  mask.permute(2, 3, 0, 1).view(-1, mask.size()[0], mask.size()[1]).sum(0) + 0.01
+    loss_mean = (loss_sum_per_keypoint_and_sample / loss_area_per_keypoint_and_sample).mean()
+    return loss_mean
+
+  def compute_loss(self, target_heatmaps, predicted_heatmaps, spatial_penalty):
+    error =  (target_heatmaps - predicted_heatmaps).abs()
+    error = error * 2.
+    error = error * error.data
+
+    false_negative_loss = target_heatmaps.data * error
+    false_negative_loss_mean = self.compute_loss_mean(target_heatmaps.data, false_negative_loss)
+
+    false_positive_loss = predicted_heatmaps.data * error
+    false_positive_loss_mean = self.compute_loss_mean(predicted_heatmaps.data, false_positive_loss)
+
+    return false_negative_loss_mean, false_positive_loss_mean
 
   def save_train_state(self, epoch, current_iteration, optimizer_higher_resolution, optimizer_silco):
     torch.save({
@@ -102,6 +124,7 @@ class Trainer():
     self.roboaugen_writer.add_scalar('Entropy Loss', losses['entropy_loss'], current_iteration )
     self.roboaugen_writer.add_scalar('False Positive Loss', losses['false_positive_loss'], current_iteration )
     self.roboaugen_writer.add_scalar('False Negative Loss', losses['false_negative_loss'], current_iteration )
+    #self.roboaugen_writer.add_scalar('True Negative Loss', losses['true_negative_loss'], current_iteration )
     #self.roboaugen_writer.add_scalar('Spatial Entropy Loss', losses['spatial_location_entropy_loss'], current_iteration )
     #self.roboaugen_writer.add_scalar('Feature Entropy Loss', losses['feature_entropy_loss'], current_iteration )
 
@@ -160,6 +183,7 @@ class Trainer():
         false_negative_loss, false_positive_loss = self.compute_loss(target_heatmaps, predicted_heatmaps, spatial_penalty)
         losses['false_negative_loss'] = false_negative_loss
         losses['false_positive_loss'] = false_positive_loss
+        #losses['true_negative_loss'] = true_negative_loss
         losses['entropy_loss'] = Trainer.entropy(predicted_heatmaps) * 1e-3
         losses['total_loss'] = false_negative_loss + false_positive_loss
         if mode == 'silco' or mode == 'both':

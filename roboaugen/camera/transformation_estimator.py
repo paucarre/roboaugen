@@ -110,19 +110,28 @@ class ProcrustesProblemSolver():
     '''
     def __init__(self):
         self.shape_points = np.array([ \
-            [40.,  -40.,  0.],  # 0 - Back-Bottom-Right
-            [40., 40.,  0.],  # 1 - Back-Bottom-Left
-            [40., 40., 55.],  # 2 - Back-Top-Left
-            [40.,  -40., 55.],  # 3 - Back-Top-Right
-            [ -40.,  -40.,  0.],  # 4 - Front-Bottom-Right
             [ -40., 40.,  0.],  # 5 - Front-Bottom-Left
+            [ -40.,-40.,  0.],  # 4 - Front-Bottom-Right
+            [ -40.,-40., 55.],
             [ -40., 40., 55.],  # 6 - Front-Top-Left
-            [ -40.,  -40., 55.]\
-                ]) # 7 - Front-Top-Right
+            [40., 40.,  0.],  # 1 - Back-Bottom-Left
+            [40.,  -40.,  0.],  # 0 - Back-Bottom-Right
+            [40.,  -40., 55.] , # 3
+            [40., 40., 55.],  # 2 - Back-Top-Left
+                ])
         center = self.shape_points.mean(0)
         self.shape_points = self.shape_points - center
+        projection_angle = -np.pi / 4
+        rot =  np.array(
+            [
+                [ np.cos(projection_angle),-np.sin(projection_angle),  0],
+                [ np.sin(projection_angle), np.cos(projection_angle),  0.],
+                [0, 0.,  1]
+            ])
+        self.shape_points = (rot @ self.shape_points.T).T
         #self.shape_length = np.linalg.norm(self.shape_points, axis=1)
         self.shape_point_distances = self.compute_point_distances(self.shape_points)
+
 
     def compute_point_distances(self, points):
         points_replicated = np.expand_dims(points, axis=0)
@@ -192,13 +201,25 @@ class ProcrustesProblemSolver():
     def solution_attempt(self, predicted_points, length_threshold, standard_deviation_center_threshold=10):
         keypoints_with_values = [idx for idx, point in enumerate(predicted_points) if point is not None]
         if len(keypoints_with_values) == 3:
+            print('solution attempt', keypoints_with_values)
             shape_points_with_matching_predictions = self.shape_points[keypoints_with_values]
             predicted_points_with_values = np.array([point for idx, point in enumerate(predicted_points) if point is not None])
+            '''
+            predicted_points_with_values = shape_points_with_matching_predictions # np.array([point for idx, point in enumerate(predicted_points) if point is not None])
+            angle_distortion = 0.1
+            rot = np.array(
+                [
+                    [ 1., 0., 0.],
+                    [ 0., np.cos(angle_distortion), -np.sin(angle_distortion)],
+                    [ 0., np.sin(angle_distortion), np.cos(angle_distortion)],
+                ])
+            predicted_points_with_values = (rot @ shape_points_with_matching_predictions.T).T + 20
+            '''
             basis_for_shape = self.create_orthonormal_basis(shape_points_with_matching_predictions)
             basis_for_predicted = self.create_orthonormal_basis(predicted_points_with_values)
-            coordinates = basis_for_shape @ shape_points_with_matching_predictions
-            displacement = basis_for_predicted.T @ coordinates
-            displacement = predicted_points_with_values - displacement
+            rotation = basis_for_predicted.T @ basis_for_shape
+            predicted_vectors_to_center = (rotation @ -shape_points_with_matching_predictions.T).T
+            displacement = predicted_points_with_values + predicted_vectors_to_center
             standard_deviation_center = displacement.std(0).sum()
             if standard_deviation_center < standard_deviation_center_threshold:
                 displacement = displacement.mean(0)
@@ -209,11 +230,11 @@ class ProcrustesProblemSolver():
                 mean_difference = difference.mean(0)
                 keypoints_with_wrong_lengths = mean_difference > length_threshold
                 if keypoints_with_wrong_lengths.sum() == 0:
-                    rotation = basis_for_predicted @ basis_for_shape.T
+
                     return ProcrustesTripletSolution(ProcrustesSolutionType.SOLUTION_FOUND, predicted_points, keypoints_with_values, rotation, displacement)
         return ProcrustesTripletSolution(ProcrustesSolutionType.NO_SOLUTION_FOUND, predicted_points)
 
-    def solve_for_point_triplet(self, predicted_points, length_threshold = 0.05):
+    def solve_for_point_triplet(self, predicted_points, length_threshold = 0.1):
         solution = None
         current_solution_type = ProcrustesSolutionType.NEW_SET_OF_POINTS_FOUND
         while current_solution_type == ProcrustesSolutionType.NEW_SET_OF_POINTS_FOUND:
@@ -241,8 +262,8 @@ class ProcrustesProblemSolver():
             camera_matrix = camera_model.undistorted_camera_matrix @ camera_model.trans_robot_to_camera_rotation
             # TODO: this is a hack to adapt the focals on x and y directions so that there is distance accuracy.
             # This is to be fixed recalibrating properly the camera
-            camera_matrix[0, 1] *= 0.74
-            camera_matrix[1, 2] *= 0.74
+            camera_matrix[0, 1] *= 0.78
+            camera_matrix[1, 2] *= 0.68
             forward_kinematics = RobotForwardKinematics(robot_topology)
             initial_transformation = forward_kinematics.get_transformation(initial_state) @ camera_holder_transformation
             final_transformation = forward_kinematics.get_transformation(final_state) @ camera_holder_transformation

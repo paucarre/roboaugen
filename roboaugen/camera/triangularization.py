@@ -24,14 +24,6 @@ class FundamentalMatrixGenerator():
         self.camera_holder_transformation = camera_holder_transformation
 
     def generate_fundamental_matrix(self, initial_state, final_state):
-        print(initial_state, final_state)
-        initial_transformation = self.forward_kinematics.get_transformation(initial_state) #@ self.camera_holder_transformation
-        final_transformation = self.forward_kinematics.get_transformation(final_state)# @ self.camera_holder_transformation
-        print(initial_transformation @  np.array([0, 0, 0, 1]).T)
-        print(final_transformation @  np.array([0, 0, 0, 1]).T)
-        print(initial_transformation @  np.array([1, 0, 0, 0]).T)
-        print(final_transformation @  np.array([1, 0, 0, 0]).T)
-
         initial_transformation = self.forward_kinematics.get_transformation(initial_state) @ self.camera_holder_transformation
         final_transformation = self.forward_kinematics.get_transformation(final_state) @ self.camera_holder_transformation
         final_viewed_from_initial = np.linalg.inv(initial_transformation) @ final_transformation
@@ -209,7 +201,7 @@ class KeypointMatcher():
         point_distances = point_distances.reshape(points.shape[0], points.shape[0])
         return point_distances
 
-    def group_matches(self, keypoint_to_matches, grouping_distance_threshold = 15.):
+    def group_matches(self, keypoint_to_matches, grouping_distance_threshold = 30.):
         keypoint_to_matches_grouped = []
         for keypoint in keypoint_to_matches:
             matches_grouped = []
@@ -267,8 +259,8 @@ class Triangularizer():
         self.camera_matrix = camera_model.undistorted_camera_matrix @ camera_model.trans_robot_to_camera_rotation
         # TODO: this is a hack to adapt the focals on x and y directions so that there is distance accuracy.
         # This is to be fixed recalibrating properly the camera
-        self.camera_matrix[0, 1] *= 0.74
-        self.camera_matrix[1, 2] *= 0.74
+        self.camera_matrix[0, 1] *= 0.78
+        self.camera_matrix[1, 2] *= 0.68
         self.forward_kinematics = RobotForwardKinematics(camera_robot_topology)
         self.camera_holder_transformation = camera_holder_transformation
 
@@ -340,8 +332,8 @@ class Triangularizer():
                 final_point = final_point / final_point[2]
                 image_final = cv2.circle(image_final, (int(final_point[0]), int(final_point[1])), 4, color, thickness=2)
 
-        #cv2.imshow(f'Reprojected | Point in Initial Image', image_initial)
-        #cv2.imshow(f'Reprojected | Point in Final Image', image_final)
+        cv2.imshow(f'Reprojected | Point in Initial Image', image_initial)
+        cv2.imshow(f'Reprojected | Point in Final Image', image_final)
 
 class EndToEndTransformationSolution():
 
@@ -370,19 +362,27 @@ class EndToEndTransformationEstimator():
     def __init__(self, mode):
         self.mode = mode
         self.camera_topology = RobotTopology(l1=142, l2=142, l3=142, h1=200, angle_wide_1=180, angle_wide_2=180 + 90, angle_wide_3=180 + 90)
-        projection_angle = np.sqrt(2.) / 2.
-        self.camera_holder_transformation = np.array(
+        angle_distortion = -0.015
+        self.x_rotation_camera_holder = np.array(
             [
-                [ projection_angle, 0.,  projection_angle, 50.252],
-                [ 0.,               1.,                0.,  0.   ],
-                [-projection_angle, 0.,  projection_angle,  9.296],
+                [ 1., 0., 0., 0.],
+                [ 0., np.cos(angle_distortion), -np.sin(angle_distortion), 0.],
+                [ 0., np.sin(angle_distortion), np.cos(angle_distortion), 0.],
+                [ 0., 0., 0., 1.]
+            ])
+        projection_angle = (np.sqrt(2.) / 2.)
+        self.camera_holder_transformation = self.x_rotation_camera_holder @ np.array(
+            [
+                [ projection_angle, 0.,  projection_angle, 50.252 * 0.7],
+                [ 0.,               1.,                0.,  0.  ],
+                [-projection_angle, 0.,  projection_angle, 9.296 * 0.7],
                 [ 0.,               0.,                0.,  1.   ]
             ])
 
         self.inferencer = Inferencer(distort=False, keep_dimensions=True, use_cache=False, \
             mode=mode, max_background_objects=1, max_foreground_objects=1)
         supports_folder = 'test/images/'
-        if self.mode is not 'keypoints':
+        if self.mode != 'keypoints':
             self.supports = self.inferencer.get_supports_from_folder(supports_folder)
             self.supports = torch.cat([self.supports] * 2 ).cuda()
         else:
@@ -429,19 +429,18 @@ class EndToEndTransformationEstimator():
         keypoint_to_matches = keypoint_matcher.get_matches_from_predictions(predicted_heatmaps,\
             scale, prediction_threshold = prediction_threshold, epipolar_threshold = epipolar_threshold)
 
-        '''
         keypoint_to_matches = {
-                0: [EpipolarMatch(np.array([224, 301]), np.array([468, 294]), 0., 0., 0.)],
-                1: [EpipolarMatch(np.array([209, 404]), np.array([503, 396]), 0., 0., 0.)],
-                2: [EpipolarMatch(np.array([ 88, 411]), np.array([389, 404]), 0., 0., 0.)],
-                3: [EpipolarMatch(np.array([123, 304]), np.array([371, 299]), 0., 0., 0.)],
-                4: [EpipolarMatch(np.array([116, 443]), np.array([379, 435]), 0., 0., 0.)],
-                5: [EpipolarMatch(np.array([221, 436]), np.array([482, 431]), 0., 0., 0.)],
-                6: [],
-                7: []
-            }
+            0:[EpipolarMatch(np.array([393, 323]), np.array([222, 315]), 1, 1, 1)],
+            1:[EpipolarMatch(np.array([411, 387]), np.array([290, 310]), 1, 1, 1)],
+            2:[EpipolarMatch(np.array([423, 359]), np.array([288, 282]), 1, 1, 1)],
+            3:[],
+            4:[],
+            5:[],
+            6:[],
+            7:[]
+        }
 
-        '''
+        print(keypoint_to_matches)
         image_initial_ungrouped, image_final_ungrouped = keypoint_matcher.draw_keypoint_matches(\
             keypoint_to_matches, image_initial_raw, image_final_raw, camera_model)
 
@@ -450,6 +449,8 @@ class EndToEndTransformationEstimator():
 
         triangularizer = Triangularizer(camera_model, self.camera_topology, self.camera_holder_transformation)
         points_predicted = triangularizer.triangularize(initial_state, final_state, keypoint_to_matches)
+        triangularizer.visualize_reprojection(points_predicted, image_initial_raw, image_final_raw, initial_state, final_state)
+        print('points_predicted', points_predicted)
 
         procrustes_problem_solver = ProcrustesProblemSolver()
         solution = procrustes_problem_solver.solve(points_predicted)
@@ -463,11 +464,7 @@ class EndToEndTransformationEstimator():
             return EndToEndTransformationSolution(None, None,
                 None, image_initial_ungrouped, image_final_ungrouped,
                 image_initial_grouped, image_final_grouped, heatmap_images)
-        '''
-        return EndToEndTransformationSolution(None, None,
-                None, image_initial_ungrouped, image_final_ungrouped,
-                None, None, None)
-        '''
+
 
 def to_radians(degrees):
     return (degrees / 180) * np.pi
@@ -476,7 +473,7 @@ def to_radians(degrees):
 @click.option("--log_idx", default=0, help="Log folder index")
 @click.option("--threshold", default=0.1, help="Prediction heatmap threshold")
 @click.option("--epipolar_threshold", default=1., help="Pointto epipolar line distance threshold")
-@click.option("--mode", default='keypoints', help="Training mode: keypoints, silco.")
+@click.option("--mode", default='keypoints', help="Model mode: keypoints, silco.")
 def triangularize(log_idx, threshold, epipolar_threshold, mode):
     config = Config()
     #image_initial_path = '/home/rusalka/Pictures/Webcam/first.jpg'
@@ -495,7 +492,7 @@ def triangularize(log_idx, threshold, epipolar_threshold, mode):
         with open( f'{data_log_dir}/final_state.json') as json_file:
             final_state_data = json.load(json_file)
 
-
+        '''
         initial_state = RobotState.from_robot_parameters(200, to_radians(30.9866), to_radians(116.6691), 0)
         final_state = RobotState.from_robot_parameters(200, to_radians(-30.9866), to_radians(-116.6691), 0)
         '''
@@ -503,7 +500,7 @@ def triangularize(log_idx, threshold, epipolar_threshold, mode):
             angle_1=initial_state_data['angle_1'], angle_2=initial_state_data['angle_2'], angle_3=initial_state_data['angle_3'])
         final_state = RobotState(linear_1=final_state_data['linear_1'],
             angle_1=final_state_data['angle_1'], angle_2=final_state_data['angle_2'], angle_3=final_state_data['angle_3'])
-        '''
+
         end_to_end_transformation_estimator = EndToEndTransformationEstimator(mode)
         end_to_end_solution = \
             end_to_end_transformation_estimator.compute_transformation(initial_state, final_state, image_initial_raw, image_final_raw, threshold, epipolar_threshold)
@@ -556,3 +553,13 @@ def triangularize(log_idx, threshold, epipolar_threshold, mode):
 
 if __name__ == '__main__':
     triangularize()
+    '''
+    points = np.array([
+        [np.array([ 4.91315465e+02,  2.83877340e-01, -1.13662938e+02])],
+        [np.array([ 435.08044635,  -57.92326366, -106.72531966])],
+        [np.array([433.73218005, -56.94843264, -58.42547626])],
+        [np.array([479.99441057,   0.91442501, -51.38419592])]])
+    print(np.sqrt((points[0] - points[1]) ** 2).sum())
+    print(np.sqrt((points[1] - points[2]) ** 2).sum())
+    print(np.sqrt((points[2] - points[3]) ** 2).sum())
+    '''
