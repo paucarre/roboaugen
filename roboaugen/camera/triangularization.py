@@ -201,7 +201,7 @@ class KeypointMatcher():
         point_distances = point_distances.reshape(points.shape[0], points.shape[0])
         return point_distances
 
-    def group_matches(self, keypoint_to_matches, grouping_distance_threshold = 30.):
+    def group_matches(self, keypoint_to_matches, grouping_distance_threshold = 50.):
         keypoint_to_matches_grouped = []
         for keypoint in keypoint_to_matches:
             matches_grouped = []
@@ -362,7 +362,7 @@ class EndToEndTransformationEstimator():
     def __init__(self, mode):
         self.mode = mode
         self.camera_topology = RobotTopology(l1=142, l2=142, l3=142, h1=200, angle_wide_1=180, angle_wide_2=180 + 90, angle_wide_3=180 + 90)
-        angle_distortion = -0.015
+        angle_distortion = 0.01#-0.015
         self.x_rotation_camera_holder = np.array(
             [
                 [ 1., 0., 0., 0.],
@@ -428,7 +428,7 @@ class EndToEndTransformationEstimator():
         keypoint_matcher = KeypointMatcher(epipolar_line_generator)
         keypoint_to_matches = keypoint_matcher.get_matches_from_predictions(predicted_heatmaps,\
             scale, prediction_threshold = prediction_threshold, epipolar_threshold = epipolar_threshold)
-
+        '''
         keypoint_to_matches = {
             0:[EpipolarMatch(np.array([393, 323]), np.array([222, 315]), 1, 1, 1)],
             1:[EpipolarMatch(np.array([411, 387]), np.array([290, 310]), 1, 1, 1)],
@@ -439,7 +439,7 @@ class EndToEndTransformationEstimator():
             6:[],
             7:[]
         }
-
+        '''
         print(keypoint_to_matches)
         image_initial_ungrouped, image_final_ungrouped = keypoint_matcher.draw_keypoint_matches(\
             keypoint_to_matches, image_initial_raw, image_final_raw, camera_model)

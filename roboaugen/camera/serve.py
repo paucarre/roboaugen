@@ -10,6 +10,7 @@ import numpy as np
 import logging
 import base64
 
+import time
 import json
 import os
 from enum import Enum, auto
@@ -128,6 +129,7 @@ def message():
     final_state = initial_state
     initial_state = state
     image_final_raw = image_initial_raw
+    time.sleep(0.1)
     capture_image_task_queue.put('RECORD_CAMERA')
     result_ready = not capture_image_result_queue.empty()
     while not result_ready:
@@ -143,8 +145,8 @@ def message():
 
         image_initial = np.copy(image_initial_raw)
         image_final = np.copy(image_final_raw)
-        threshold = 0.25
-        epipolar_threshold = 6
+        threshold = 0.1
+        epipolar_threshold = 9
         end_to_end_solution = end_to_end_transformation_estimator.compute_transformation(initial_state,
             final_state, image_initial, image_final, threshold, epipolar_threshold)
 

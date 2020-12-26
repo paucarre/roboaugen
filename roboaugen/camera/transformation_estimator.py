@@ -128,7 +128,7 @@ class ProcrustesProblemSolver():
                 [ np.sin(projection_angle), np.cos(projection_angle),  0.],
                 [0, 0.,  1]
             ])
-        self.shape_points = (rot @ self.shape_points.T).T
+        #self.shape_points = (rot @ self.shape_points.T).T
         #self.shape_length = np.linalg.norm(self.shape_points, axis=1)
         self.shape_point_distances = self.compute_point_distances(self.shape_points)
 
